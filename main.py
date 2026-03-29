@@ -20,7 +20,7 @@ template = ChatPromptTemplate.from_messages(
     [("system","you are a AI that summarizes the text"),
      ("human","{data}")]
 )
-
+            
 model =  ChatMistralAI(model_name =  "mistral-small-2506")
 
 prompt = template.format_messages(data = docs)
