@@ -1,31 +1,74 @@
 from dotenv import load_dotenv
-from langchain_mistralai import  ChatMistralAI
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_core.prompts import  ChatPromptTemplate
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
+from langchain_mistralai import MistralAIEmbeddings
+from langchain_community.vectorstores import  Chroma
+from langchain_mistralai import ChatMistralAI
+from langchain_core.prompts import ChatPromptTemplate
 
 load_dotenv()
 
-data = PyPDFLoader("document_loaders/kaam.pdf")
-docs = data.load()
+embedding_model = MistralAIEmbeddings()
 
-splitter = RecursiveCharacterTextSplitter(
-    chunk_size =1000,
-    chunk_overlap = 200
+vector_store = Chroma(
+    persist_directory= 'chroma_db',
+    embedding_function= embedding_model
 )
-chunks = splitter.split_documents(docs)
 
-template = ChatPromptTemplate.from_messages(
-    [("system","you are a AI that summarizes the text"),
-     ("human","{data}")]
+retriever   = vector_store.as_retriever(
+    search_type = 'mmr',
+    search_kwargs= {
+        "k" : 4,
+        "fetch_k":10,
+        "lambda_mult" :0.5
+    }
 )
-            
-model =  ChatMistralAI(model_name =  "mistral-small-2506")
 
-prompt = template.format_messages(data = docs)
+llm = ChatMistralAI(model_name = "mistral-small-2506")
 
+# implementing prompt template
+prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are a helpful AI assistant.
 
-result = model.invoke(prompt)
+Use ONLY the provided context to answer the question.
 
-print(result.content)
+If the answer is not present in the context,
+say: "I could not find the answer in the document."
+"""
+        ),
+        (
+            "human",
+            """Context:
+{context}
+
+Question:
+{question}
+"""
+        )
+    ]
+)
+
+print("Rag system created ")
+
+print("press 0 to exit ")
+
+while True:
+    query = input("You : ")
+    if query == "0":
+        break 
+    
+    docs = retriever.invoke(query)
+
+    context = "\n\n".join(
+        [doc.page_content for doc in docs]
+    )
+    
+    final_prompt = prompt.invoke({
+        "context" :context,
+        "question": query
+    })
+    
+    response = llm.invoke(final_prompt)
+
+    print(f"\n AI: {response.content}")
