@@ -21,6 +21,9 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = BASE_DIR / "uploads"
 VECTORSTORES_DIR = BASE_DIR / "vectorstores"
+CHUNK_SIZE = 2400
+CHUNK_OVERLAP = 200
+MIN_CHUNK_CHARS = 80
 UPLOADS_DIR.mkdir(exist_ok=True)
 VECTORSTORES_DIR.mkdir(exist_ok=True)
 
@@ -50,6 +53,15 @@ class DocumentStatusResponse(BaseModel):
     status: str
     chunks_indexed: int | None = None
     error: str | None = None
+
+
+@lru_cache
+def get_indexing_dependencies() -> tuple[type, type, type]:
+    from langchain_community.document_loaders import PyPDFLoader
+    from langchain_community.vectorstores import Chroma
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+    return PyPDFLoader, Chroma, RecursiveCharacterTextSplitter
 
 
 @lru_cache
@@ -145,25 +157,37 @@ def ensure_document_exists(document_id: str) -> Path:
     return vectorstore_path
 
 
-def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
-    from langchain_community.document_loaders import PyPDFLoader
-    from langchain_community.vectorstores import Chroma
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
+@app.on_event("startup")
+def warm_runtime() -> None:
+    # Warm the heavy indexing stack once at startup instead of during the first upload.
+    get_indexing_dependencies()
+    get_embedding_model()
+    get_prompt()
 
+
+def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
     write_document_status(document_id, file_name=file_name, status="indexing")
 
     try:
+        PyPDFLoader, Chroma, RecursiveCharacterTextSplitter = get_indexing_dependencies()
         loader = PyPDFLoader(str(upload_path))
-        docs = loader.load()
+        docs = [doc for doc in loader.load() if doc.page_content.strip()]
 
         if not docs:
             raise ValueError("The PDF did not contain readable pages.")
 
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1500,
-            chunk_overlap=150,
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
         )
-        chunks = splitter.split_documents(docs)
+        chunks = [
+            chunk
+            for chunk in splitter.split_documents(docs)
+            if len(chunk.page_content.strip()) >= MIN_CHUNK_CHARS
+        ]
+
+        if not chunks:
+            raise ValueError("The PDF did not contain enough readable text to index.")
 
         Chroma.from_documents(
             documents=chunks,
