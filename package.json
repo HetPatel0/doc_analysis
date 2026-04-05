@@ -1,0 +1,14 @@
+{
+  "name": "bookify-monorepo",
+  "private": true,
+  "workspaces": [
+    "apps/frontend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev -w apps/frontend",
+    "build:frontend": "npm run build -w apps/frontend",
+    "lint:frontend": "npm run lint -w apps/frontend",
+    "dev:backend": "powershell -ExecutionPolicy Bypass -File ./apps/backend/start_dev.ps1",
+    "install:frontend": "npm install -w apps/frontend"
+  }
+}
