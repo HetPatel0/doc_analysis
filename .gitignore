@@ -1,5 +1,7 @@
 .DS_Store
 
+node_modules/
+
 apps/backend/.venv/
 apps/backend/__pycache__/
 apps/backend/uploads/

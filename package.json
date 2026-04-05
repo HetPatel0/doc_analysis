@@ -5,6 +5,7 @@
     "apps/frontend"
   ],
   "scripts": {
+    "dev": "bun --cwd apps/frontend run dev",
     "dev:frontend": "npm run dev -w apps/frontend",
     "build:frontend": "npm run build -w apps/frontend",
     "lint:frontend": "npm run lint -w apps/frontend",

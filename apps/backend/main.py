@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -41,6 +42,14 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+
+
+class DocumentStatusResponse(BaseModel):
+    document_id: str
+    file_name: str
+    status: str
+    chunks_indexed: int | None = None
+    error: str | None = None
 
 
 @lru_cache
@@ -90,11 +99,91 @@ def get_vectorstore_path(document_id: str) -> Path:
     return VECTORSTORES_DIR / document_id
 
 
+def get_document_status_path(document_id: str) -> Path:
+    return VECTORSTORES_DIR / f"{document_id}.json"
+
+
+def write_document_status(
+    document_id: str,
+    *,
+    file_name: str,
+    status: str,
+    chunks_indexed: int | None = None,
+    error: str | None = None,
+) -> None:
+    get_document_status_path(document_id).write_text(
+        json.dumps(
+            {
+                "document_id": document_id,
+                "file_name": file_name,
+                "status": status,
+                "chunks_indexed": chunks_indexed,
+                "error": error,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def read_document_status(document_id: str) -> DocumentStatusResponse:
+    status_path = get_document_status_path(document_id)
+    if not status_path.exists():
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return DocumentStatusResponse.model_validate_json(status_path.read_text(encoding="utf-8"))
+
+
 def ensure_document_exists(document_id: str) -> Path:
+    status = read_document_status(document_id)
+    if status.status == "failed":
+        raise HTTPException(status_code=400, detail=status.error or "Document indexing failed.")
+    if status.status != "ready":
+        raise HTTPException(status_code=409, detail="Document is still being indexed.")
+
     vectorstore_path = get_vectorstore_path(document_id)
     if not vectorstore_path.exists():
-        raise HTTPException(status_code=404, detail="Document not found.")
+        raise HTTPException(status_code=404, detail="Document index not found.")
     return vectorstore_path
+
+
+def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
+    from langchain_community.document_loaders import PyPDFLoader
+    from langchain_community.vectorstores import Chroma
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+    write_document_status(document_id, file_name=file_name, status="indexing")
+
+    try:
+        loader = PyPDFLoader(str(upload_path))
+        docs = loader.load()
+
+        if not docs:
+            raise ValueError("The PDF did not contain readable pages.")
+
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1500,
+            chunk_overlap=150,
+        )
+        chunks = splitter.split_documents(docs)
+
+        Chroma.from_documents(
+            documents=chunks,
+            embedding=get_embedding_model(),
+            persist_directory=str(get_vectorstore_path(document_id)),
+        )
+
+        write_document_status(
+            document_id,
+            file_name=file_name,
+            status="ready",
+            chunks_indexed=len(chunks),
+        )
+    except Exception as exc:
+        write_document_status(
+            document_id,
+            file_name=file_name,
+            status="failed",
+            error=str(exc),
+        )
 
 
 @app.get("/health")
@@ -102,12 +191,15 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)) -> dict[str, str | int]:
-    from langchain_community.document_loaders import PyPDFLoader
-    from langchain_community.vectorstores import Chroma
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
+@app.get("/documents/{document_id}", response_model=DocumentStatusResponse)
+def get_document_status(document_id: str) -> DocumentStatusResponse:
+    return read_document_status(document_id)
 
+
+@app.post("/upload")
+async def upload_pdf(
+    background_tasks: BackgroundTasks, file: UploadFile = File(...)
+) -> dict[str, str | int]:
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
 
@@ -117,29 +209,13 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict[str, str | int]:
 
     file_bytes = await file.read()
     upload_path.write_bytes(file_bytes)
-
-    loader = PyPDFLoader(str(upload_path))
-    docs = loader.load()
-
-    if not docs:
-        raise HTTPException(status_code=400, detail="The PDF did not contain readable pages.")
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-    )
-    chunks = splitter.split_documents(docs)
-
-    Chroma.from_documents(
-        documents=chunks,
-        embedding=get_embedding_model(),
-        persist_directory=str(get_vectorstore_path(document_id)),
-    )
+    write_document_status(document_id, file_name=safe_name, status="queued")
+    background_tasks.add_task(index_pdf, document_id, safe_name, upload_path)
 
     return {
         "document_id": document_id,
         "file_name": safe_name,
-        "chunks_indexed": len(chunks),
+        "status": "queued",
     }
 
 

@@ -32,7 +32,15 @@ type Message = {
 type UploadResponse = {
   document_id: string;
   file_name: string;
-  chunks_indexed: number;
+  status: "queued";
+};
+
+type DocumentStatusResponse = {
+  document_id: string;
+  file_name: string;
+  status: "queued" | "indexing" | "ready" | "failed";
+  chunks_indexed?: number | null;
+  error?: string | null;
 };
 
 type ChatResponse = {
@@ -131,12 +139,44 @@ export default function PdfChatShell() {
       }
 
       setDocumentId(result.document_id);
+
+      let status: DocumentStatusResponse | null = null;
+
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const statusResponse = await fetch(
+          `${API_URL}/documents/${result.document_id}`
+        );
+        const statusResult =
+          ((await statusResponse.json()) as DocumentStatusResponse & ErrorResponse) ??
+          {};
+
+        if (!statusResponse.ok || !statusResult.status) {
+          throw new Error(statusResult.detail ?? "Could not check document status.");
+        }
+
+        status = statusResult;
+
+        if (status.status === "ready") {
+          break;
+        }
+
+        if (status.status === "failed") {
+          throw new Error(status.error ?? "Document indexing failed.");
+        }
+      }
+
+      if (!status || status.status !== "ready") {
+        throw new Error("Indexing is taking too long. Please try again in a moment.");
+      }
+
       setMessages((current) => [
         ...current,
         {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: `Your PDF is ready. Indexed ${result.chunks_indexed} chunks from "${result.file_name}". Ask for a summary, a chapter breakdown, or something specific.`,
+          content: `Your PDF is ready. Indexed ${status.chunks_indexed ?? 0} chunks from "${status.file_name}". Ask for a summary, a chapter breakdown, or something specific.`,
         },
       ]);
     } catch (error) {
