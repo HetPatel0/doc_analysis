@@ -41,6 +41,7 @@ numpy
 
 fastapi
 uvicorn
+python-multipart
 
 # UI (optional)
 

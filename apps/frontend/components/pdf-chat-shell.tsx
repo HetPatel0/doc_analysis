@@ -5,21 +5,11 @@ import {
   ArrowUp,
   FileText,
   LoaderCircle,
-  MessageSquare,
-  Paperclip,
-  ShieldCheck,
-  Sparkles,
+  RefreshCcw,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -59,16 +49,11 @@ const starterPrompts = [
   "List the most important action items.",
 ];
 
-const features = [
-  "Upload a single PDF and index it from the browser.",
-  "Keep the conversation focused on one source document.",
-  "Use your existing LangChain and Chroma backend without changing the UI.",
-];
-
 export default function PdfChatShell() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [documentId, setDocumentId] = useState<string | null>(null);
+  const [chunksIndexed, setChunksIndexed] = useState<number | null>(null);
   const [isPreparing, setIsPreparing] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -88,15 +73,18 @@ export default function PdfChatShell() {
     !isPreparing &&
     !isSending;
 
+  const isReady = Boolean(selectedFile && documentId && !isPreparing);
+
   const statusLabel = useMemo(() => {
-    if (isPreparing) return "Indexing document";
-    if (selectedFile && documentId) return "Ready to chat";
-    if (selectedFile) return "Upload required";
-    return "Waiting for PDF";
+    if (isPreparing) return "Indexing";
+    if (selectedFile && documentId) return "Ready";
+    if (selectedFile) return "Needs retry";
+    return "No document";
   }, [documentId, isPreparing, selectedFile]);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
+    event.target.value = "";
 
     if (!file) return;
 
@@ -114,6 +102,7 @@ export default function PdfChatShell() {
 
     setSelectedFile(file);
     setDocumentId(null);
+    setChunksIndexed(null);
     setIsPreparing(true);
     setMessages([
       {
@@ -171,6 +160,7 @@ export default function PdfChatShell() {
         throw new Error("Indexing is taking too long. Please try again in a moment.");
       }
 
+      setChunksIndexed(status.chunks_indexed ?? null);
       setMessages((current) => [
         ...current,
         {
@@ -255,171 +245,227 @@ export default function PdfChatShell() {
   }
 
   return (
-    <main className="relative overflow-hidden">
-      <div className="absolute inset-x-0 top-0 -z-10 h-[32rem] bg-[radial-gradient(circle_at_top,rgba(23,23,23,0.08),transparent_60%)]" />
-      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-6xl flex-col px-4 py-8 sm:px-6 lg:py-10">
-        <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-          <Card className="border-border/80 bg-card/90 backdrop-blur-sm">
-            <CardHeader className="gap-4">
-              <Badge variant="outline" className="w-fit">
-                Minimal PDF chat
-              </Badge>
-              <div className="space-y-3">
-                <CardTitle className="max-w-xl font-serif text-4xl leading-tight sm:text-5xl">
-                  Clean interface for uploading a PDF and chatting with it.
-                </CardTitle>
-                <CardDescription className="max-w-xl text-base">
-                  A focused frontend for Bookify with a simple upload step,
-                  clear status, and a conversation area backed by your FastAPI
-                  RAG service.
-                </CardDescription>
+    <main className="min-h-[calc(100vh-3.5rem)]">
+      <div className="mx-auto flex w-full max-w-6xl flex-col px-4 py-6 sm:px-6 sm:py-8">
+        <section className="border-b border-border/80 pb-8">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl space-y-3">
+              <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-muted-foreground">
+                Document Workspace
+              </p>
+              <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-[2.6rem]">
+                A quieter interface for reading a PDF through chat.
+              </h1>
+              <p className="max-w-xl text-sm leading-6 text-muted-foreground sm:text-[15px]">
+                Upload one file, wait for indexing, then ask direct questions.
+                The layout is intentionally stripped back so the document stays
+                central.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-border bg-card px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Status
+                </p>
+                <p className="mt-2 text-sm font-medium text-foreground">
+                  {statusLabel}
+                </p>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-8">
-              <div className="grid gap-3 sm:grid-cols-3">
-                {features.map((feature) => (
-                  <div
-                    key={feature}
-                    className="rounded-2xl border border-border/70 bg-background/80 p-4 text-sm leading-6 text-muted-foreground"
-                  >
-                    {feature}
-                  </div>
-                ))}
+              <div className="rounded-2xl border border-border bg-card px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Source
+                </p>
+                <p className="mt-2 truncate text-sm font-medium text-foreground">
+                  {selectedFile ? selectedFile.name : "None selected"}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-border bg-card px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Chunks
+                </p>
+                <p className="mt-2 text-sm font-medium text-foreground">
+                  {chunksIndexed ?? "Pending"}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-6 pt-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+          <aside className="rounded-[1.75rem] border border-border bg-card p-5 shadow-sm sm:p-6">
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-foreground">
+                  Source document
+                </p>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Keep the workspace tied to a single PDF for cleaner answers.
+                </p>
               </div>
 
-              <div className="rounded-3xl border border-dashed border-border bg-background/90 p-5 sm:p-6">
-                <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                      <Paperclip className="size-4" />
-                      Add your source document
-                    </div>
-                    <p className="text-sm leading-6 text-muted-foreground">
-                      Upload one PDF to unlock the chat workspace and prompt
-                      suggestions.
-                    </p>
-                  </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                onChange={handleFileChange}
+              />
 
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="application/pdf"
-                    className="hidden"
-                    onChange={handleFileChange}
-                  />
-
-                  <Button
-                    size="lg"
-                    className="h-11 rounded-xl px-5"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isPreparing}
-                  >
-                    <FileText className="size-4" />
-                    Choose PDF
-                  </Button>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isPreparing}
+                className="group flex w-full items-center justify-between rounded-2xl border border-dashed border-border bg-background px-4 py-4 text-left transition-colors hover:border-foreground/25 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-foreground">
+                    {selectedFile ? "Replace PDF" : "Choose PDF"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {selectedFile ? selectedFile.name : "Select a single file"}
+                  </p>
                 </div>
+                {isPreparing ? (
+                  <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
+                ) : selectedFile ? (
+                  <RefreshCcw className="size-4 text-muted-foreground transition-transform group-hover:rotate-45" />
+                ) : (
+                  <FileText className="size-4 text-muted-foreground" />
+                )}
+              </button>
 
-                <div className="mt-5 flex flex-wrap items-center gap-3">
-                  <Badge className="gap-2 rounded-full px-3 py-1.5">
-                    {isPreparing ? (
-                      <LoaderCircle className="size-3.5 animate-spin" />
-                    ) : (
-                      <ShieldCheck className="size-3.5" />
+              <div className="rounded-2xl border border-border bg-background">
+                <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                    State
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "rounded-full px-2.5 py-1 text-[11px] font-medium",
+                      isReady &&
+                        "border-emerald-200 bg-emerald-50 text-emerald-800",
+                      isPreparing &&
+                        "border-amber-200 bg-amber-50 text-amber-800",
+                      !selectedFile &&
+                        "border-border bg-background text-muted-foreground",
+                      selectedFile &&
+                        !documentId &&
+                        !isPreparing &&
+                        "border-rose-200 bg-rose-50 text-rose-800"
                     )}
+                  >
                     {statusLabel}
                   </Badge>
-
-                  {selectedFile ? (
-                    <div className="rounded-full border border-border bg-card px-3 py-1.5 text-sm text-foreground">
-                      {selectedFile.name}
-                    </div>
-                  ) : (
-                    <div className="rounded-full border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground">
-                      No file selected yet
-                    </div>
-                  )}
                 </div>
+                <dl className="space-y-4 px-4 py-4 text-sm">
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-muted-foreground">Filename</dt>
+                    <dd className="max-w-[12rem] text-right text-foreground">
+                      {selectedFile ? selectedFile.name : "No file selected"}
+                    </dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-muted-foreground">Document ID</dt>
+                    <dd className="max-w-[12rem] break-all text-right font-mono text-xs text-foreground">
+                      {documentId ?? "Unavailable"}
+                    </dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-muted-foreground">Indexed chunks</dt>
+                    <dd className="text-right text-foreground">
+                      {chunksIndexed ?? "Pending"}
+                    </dd>
+                  </div>
+                </dl>
               </div>
-            </CardContent>
-          </Card>
 
-          <Card className="flex min-h-[42rem] flex-col border-border/80 bg-card/95">
-            <CardHeader className="border-b border-border/70 pb-5">
-              <div className="flex items-start justify-between gap-4">
+              <div className="space-y-3">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                  Quick prompts
+                </p>
                 <div className="space-y-2">
-                  <CardTitle className="flex items-center gap-2 text-xl">
-                    <MessageSquare className="size-5" />
-                    Document chat
-                  </CardTitle>
-                  <CardDescription>
-                    Ask questions once your PDF is attached.
-                  </CardDescription>
+                  {starterPrompts.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-left text-sm leading-5 text-muted-foreground transition-colors hover:border-foreground/15 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => setPrompt(item)}
+                      disabled={!isReady || isSending}
+                    >
+                      {item}
+                    </button>
+                  ))}
                 </div>
-                <Badge variant="outline" className="rounded-full">
-                  {selectedFile && documentId ? "1 document loaded" : "No document"}
-                </Badge>
               </div>
-            </CardHeader>
+            </div>
+          </aside>
 
-            <CardContent className="flex flex-1 flex-col gap-4 p-4 sm:p-6">
-              <div className="flex-1 space-y-3 overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/80 p-3 sm:p-4">
-                <div className="flex h-full flex-col gap-3 overflow-y-auto pr-1">
+          <section className="flex min-h-[38rem] flex-col rounded-[1.75rem] border border-border bg-card shadow-sm">
+            <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  Conversation
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {isReady
+                    ? "Ask focused questions about the uploaded PDF."
+                    : "Upload a document to enable the composer."}
+                </p>
+              </div>
+              <Badge variant="outline" className="rounded-full px-3 py-1">
+                {isReady ? "1 document active" : "No active document"}
+              </Badge>
+            </div>
+
+            <div className="flex flex-1 flex-col px-4 py-4 sm:px-6 sm:py-5">
+              <div className="flex-1 overflow-hidden rounded-[1.5rem] border border-border bg-background">
+                <div className="flex h-full flex-col gap-4 overflow-y-auto p-4 sm:p-5">
                   {messages.map((message) => (
                     <div
                       key={message.id}
                       className={cn(
-                        "max-w-[92%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm",
+                        "max-w-[48rem] rounded-2xl px-4 py-3",
                         message.role === "assistant"
                           ? "self-start border border-border bg-card text-card-foreground"
                           : "self-end bg-primary text-primary-foreground"
                       )}
                     >
-                      {message.content}
+                      <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] opacity-60">
+                        {message.role === "assistant" ? "Assistant" : "You"}
+                      </p>
+                      <p className="whitespace-pre-wrap text-sm leading-6">
+                        {message.content}
+                      </p>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                {starterPrompts.map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    className="rounded-full border border-border bg-background px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    onClick={() => setPrompt(item)}
-                    disabled={!selectedFile || !documentId || isPreparing || isSending}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Sparkles className="size-3.5" />
-                      {item}
-                    </span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="rounded-[1.75rem] border border-border/80 bg-background p-3 shadow-sm">
+              <div className="mt-4 rounded-[1.5rem] border border-border bg-background p-3">
                 <Textarea
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
                   placeholder={
-                    selectedFile && documentId
-                      ? "Ask about the PDF..."
+                    isReady
+                      ? "Ask about structure, summaries, details, or passages."
                       : "Upload a PDF to enable chat"
                   }
-                  disabled={!selectedFile || !documentId || isPreparing || isSending}
+                  disabled={!isReady || isSending}
                   className="min-h-28 resize-none border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
                 />
-                <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/70 pt-3">
+                <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
                   <p className="text-xs text-muted-foreground">
-                    {selectedFile && documentId
-                      ? isSending
-                        ? "Waiting for the answer..."
-                        : "The composer is active."
-                      : "The composer unlocks after upload."}
+                    {isSending
+                      ? "Waiting for a response."
+                      : isReady
+                        ? "One document in context."
+                        : "The composer unlocks after indexing."}
                   </p>
                   <Button
                     size="icon-lg"
-                    className="rounded-2xl"
+                    className="rounded-xl"
                     onClick={handleSend}
                     disabled={!canSend}
                   >
@@ -431,8 +477,8 @@ export default function PdfChatShell() {
                   </Button>
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </section>
       </div>
     </main>
