@@ -10,6 +10,7 @@
     "build:frontend": "npm run build -w apps/frontend",
     "lint:frontend": "npm run lint -w apps/frontend",
     "dev:backend": "powershell -ExecutionPolicy Bypass -File ./apps/backend/start_dev.ps1",
+    "start:backend": "bash ./apps/backend/start_prod.sh",
     "install:frontend": "npm install -w apps/frontend"
   }
 }

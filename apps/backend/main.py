@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,19 +20,37 @@ if TYPE_CHECKING:
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
-UPLOADS_DIR = BASE_DIR / "uploads"
-VECTORSTORES_DIR = BASE_DIR / "vectorstores"
+STORAGE_DIR = Path(os.getenv("BOOKIFY_STORAGE_DIR", str(BASE_DIR)))
+UPLOADS_DIR = Path(
+    os.getenv("BOOKIFY_UPLOADS_DIR", str(STORAGE_DIR / "uploads"))
+)
+VECTORSTORES_DIR = Path(
+    os.getenv("BOOKIFY_VECTORSTORES_DIR", str(STORAGE_DIR / "vectorstores"))
+)
 CHUNK_SIZE = 2400
 CHUNK_OVERLAP = 200
 MIN_CHUNK_CHARS = 80
-UPLOADS_DIR.mkdir(exist_ok=True)
-VECTORSTORES_DIR.mkdir(exist_ok=True)
+MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-2506")
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if origin.strip()
+]
+WARM_ON_STARTUP = os.getenv("BOOKIFY_WARM_ON_STARTUP", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+VECTORSTORES_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Bookify API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,7 +94,7 @@ def get_embedding_model() -> "MistralAIEmbeddings":
 def get_llm() -> "ChatMistralAI":
     from langchain_mistralai import ChatMistralAI
 
-    return ChatMistralAI(model_name="mistral-small-2506")
+    return ChatMistralAI(model_name=MISTRAL_MODEL)
 
 
 @lru_cache
@@ -159,6 +178,9 @@ def ensure_document_exists(document_id: str) -> Path:
 
 @app.on_event("startup")
 def warm_runtime() -> None:
+    if not WARM_ON_STARTUP:
+        return
+
     # Warm the heavy indexing stack once at startup instead of during the first upload.
     get_indexing_dependencies()
     get_embedding_model()
