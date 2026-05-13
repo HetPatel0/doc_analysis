@@ -58,6 +58,10 @@ type BackendChatResponse = {
   detail?: string;
 };
 
+type BackendRequestInit = RequestInit & {
+  errorMessage: string;
+};
+
 function hashFingerprint(headers: Headers): string {
   const forwardedFor = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const realIp = headers.get("x-real-ip");
@@ -71,6 +75,23 @@ function hashFingerprint(headers: Headers): string {
 
 async function readJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
+}
+
+async function requestBackend<T>(
+  path: string,
+  init: BackendRequestInit
+): Promise<{ response: Response; result: T }> {
+  const { errorMessage, ...requestInit } = init;
+
+  try {
+    const response = await fetch(`${BACKEND_API_URL}${path}`, requestInit);
+    const result = await readJson<T>(response);
+    return { response, result };
+  } catch {
+    throw new Error(
+      `${errorMessage} The backend service is unreachable at ${BACKEND_API_URL}.`
+    );
+  }
 }
 
 async function findLatestDocument(
@@ -336,12 +357,12 @@ export async function uploadDocumentForActor(
   const formData = new FormData();
   formData.append("file", file);
 
-  const backendResponse = await fetch(`${BACKEND_API_URL}/upload`, {
-    method: "POST",
-    body: formData,
-  });
-
-  const result = await readJson<BackendUploadResponse>(backendResponse);
+  const { response: backendResponse, result } =
+    await requestBackend<BackendUploadResponse>("/upload", {
+      method: "POST",
+      body: formData,
+      errorMessage: "Could not reach the PDF backend.",
+    });
 
   if (!backendResponse.ok || !result.document_id) {
     throw new Error(result.detail ?? "Upload failed.");
@@ -382,10 +403,11 @@ export async function syncDocumentStatus(
 ): Promise<DocumentSummary> {
   await assertDocumentOwnership(actor, documentId);
 
-  const backendResponse = await fetch(`${BACKEND_API_URL}/documents/${documentId}`, {
-    cache: "no-store",
-  });
-  const result = await readJson<BackendStatusResponse>(backendResponse);
+  const { response: backendResponse, result } =
+    await requestBackend<BackendStatusResponse>(`/documents/${documentId}`, {
+      cache: "no-store",
+      errorMessage: "Could not reach the PDF backend.",
+    });
 
   if (!backendResponse.ok || !result.status) {
     throw new Error(result.detail ?? "Could not fetch document status.");
@@ -424,18 +446,18 @@ export async function chatWithDocumentForActor(
     throw new Error("You have used all 3 guest chats. Log in to continue.");
   }
 
-  const backendResponse = await fetch(`${BACKEND_API_URL}/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      document_id: documentId,
-      message: trimmedMessage,
-    }),
-  });
-
-  const result = await readJson<BackendChatResponse>(backendResponse);
+  const { response: backendResponse, result } =
+    await requestBackend<BackendChatResponse>("/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        document_id: documentId,
+        message: trimmedMessage,
+      }),
+      errorMessage: "Could not reach the PDF backend.",
+    });
 
   if (!backendResponse.ok || !result.answer) {
     throw new Error(result.detail ?? "Chat request failed.");

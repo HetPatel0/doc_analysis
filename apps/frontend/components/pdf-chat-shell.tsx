@@ -61,6 +61,8 @@ const initialMessages: Message[] = [
 export default function PdfChatShell() {
   const sessionQuery = authClient.useSession();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesViewportRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
 
   const [workspace, setWorkspace] = useState<WorkspaceState | null>(null);
   const [document, setDocument] = useState<DocumentSummary | null>(null);
@@ -149,6 +151,29 @@ export default function PdfChatShell() {
     }
   }, [isAuthenticated, limitReached]);
 
+  function scrollMessagesToBottom() {
+    const viewport = messagesViewportRef.current;
+    if (!viewport || !shouldAutoScrollRef.current) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+  }
+
+  function handleMessagesScroll() {
+    const viewport = messagesViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const distanceFromBottom =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+
+    shouldAutoScrollRef.current = distanceFromBottom < 96;
+  }
+
   async function pollDocumentStatus(documentId: string) {
     for (let attempt = 0; attempt < 120; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -206,6 +231,7 @@ export default function PdfChatShell() {
     }
 
     setIsPreparing(true);
+    shouldAutoScrollRef.current = true;
     setMessages([
       {
         id: "uploading-document",
@@ -232,6 +258,7 @@ export default function PdfChatShell() {
       setDocument(result.document);
       await loadWorkspace();
       await pollDocumentStatus(result.document.documentId);
+      scrollMessagesToBottom();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Could not upload the PDF.";
@@ -270,6 +297,8 @@ export default function PdfChatShell() {
     ]);
     setPrompt("");
     setIsSending(true);
+    shouldAutoScrollRef.current = true;
+    scrollMessagesToBottom();
 
     try {
       const response = await fetch("/api/documents/chat", {
@@ -298,6 +327,7 @@ export default function PdfChatShell() {
         },
       ]);
       await loadWorkspace();
+      scrollMessagesToBottom();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Could not send the message.";
@@ -368,8 +398,8 @@ export default function PdfChatShell() {
     : `${remainingChats ?? GUEST_CHAT_LIMIT} / ${GUEST_CHAT_LIMIT} chats left`;
 
   return (
-    <main className="min-h-screen px-4 py-6 sm:px-6">
-      <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-4xl flex-col rounded-[2rem] border border-border bg-card shadow-lg">
+    <main className="h-screen overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
+      <div className="mx-auto flex h-full max-w-5xl flex-col overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-lg">
         <input
           ref={fileInputRef}
           type="file"
@@ -378,9 +408,9 @@ export default function PdfChatShell() {
           onChange={handleFileChange}
         />
 
-        <header className="border-b border-border px-5 py-4 sm:px-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1">
+        <header className="border-b border-border px-4 py-3 sm:px-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1.5">
               <div className="flex items-center gap-3">
                 <span className="flex size-9 items-center justify-center rounded-xl border border-border bg-background text-sm font-semibold">
                   B
@@ -395,7 +425,7 @@ export default function PdfChatShell() {
                 </div>
               </div>
               {document ? (
-                <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <Badge variant="outline" className="rounded-full px-2.5 py-1">
                     {document.status}
                   </Badge>
@@ -451,7 +481,7 @@ export default function PdfChatShell() {
         </header>
 
         {showAuthForm && !isAuthenticated ? (
-          <section className="border-b border-border bg-background/70 px-5 py-4 sm:px-6">
+          <section className="border-b border-border bg-background/70 px-4 py-4 sm:px-5">
             <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 sm:p-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -546,10 +576,14 @@ export default function PdfChatShell() {
           </section>
         ) : null}
 
-        <section className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex flex-1 flex-col overflow-y-auto px-5 py-5 sm:px-6">
+        <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div
+            ref={messagesViewportRef}
+            onScroll={handleMessagesScroll}
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-5"
+          >
             {!document && !isWorkspaceLoading ? (
-              <div className="flex flex-1 flex-col items-center justify-center gap-5 rounded-[1.75rem] border border-dashed border-border bg-background px-6 py-12 text-center">
+              <div className="m-auto flex max-w-xl flex-col items-center justify-center gap-5 rounded-[1.5rem] border border-dashed border-border bg-background px-6 py-12 text-center">
                 <div className="space-y-2">
                   <p className="text-lg font-medium text-foreground">
                     Upload a PDF to start
@@ -580,12 +614,12 @@ export default function PdfChatShell() {
                 ) : null}
               </div>
             ) : (
-              <div className="flex min-h-full flex-col gap-4">
+              <div className="flex flex-col gap-4">
                 {messages.map((message) => (
                   <div
                     key={message.id}
                     className={cn(
-                      "max-w-[46rem] rounded-2xl px-4 py-3",
+                      "max-w-[52rem] rounded-2xl px-4 py-3",
                       message.role === "assistant"
                         ? "self-start border border-border bg-background text-foreground"
                         : "self-end bg-primary text-primary-foreground"
@@ -603,7 +637,7 @@ export default function PdfChatShell() {
             )}
           </div>
 
-          <div className="border-t border-border px-5 py-4 sm:px-6">
+          <div className="border-t border-border bg-card px-4 py-3 sm:px-5">
             <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <button
@@ -664,7 +698,7 @@ export default function PdfChatShell() {
                       : "Upload a PDF to enable chat"
                 }
                 disabled={!documentReady || isSending || (limitReached && !isAuthenticated)}
-                className="min-h-28 resize-none border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
+                className="min-h-24 max-h-48 resize-y border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
               />
               <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
                 <p className="text-xs text-muted-foreground">
@@ -678,7 +712,12 @@ export default function PdfChatShell() {
                         ? "Document is indexing."
                         : "No document uploaded yet."}
                 </p>
-                <Button size="icon-lg" className="rounded-xl" onClick={handleSend} disabled={!canSend}>
+                <Button
+                  size="icon-lg"
+                  className="rounded-xl"
+                  onClick={handleSend}
+                  disabled={!canSend}
+                >
                   {isSending ? (
                     <LoaderCircle className="size-4 animate-spin" />
                   ) : (

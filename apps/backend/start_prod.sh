@@ -13,6 +13,6 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
-exec "$PYTHON_BIN" -m uvicorn main:app \
+exec "$PYTHON_BIN" -m uvicorn main:app \                                                                      
   --host "$BIND_HOST" \
   --port "$PORT"
