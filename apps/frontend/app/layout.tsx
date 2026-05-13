@@ -28,9 +28,12 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${ibmPlexSerif.variable} ${mona_Sans.variable} h-full font-sans antialiased`}
     >
-      <body className="min-h-full bg-background text-foreground">{children}</body>
+      <body className="h-full overflow-hidden bg-background text-foreground">
+        {children}
+      </body>
     </html>
   );
 }

@@ -14,7 +14,9 @@ import {
   LockKeyhole,
   LogIn,
   LogOut,
+  Moon,
   Paperclip,
+  Sun,
   UserPlus,
 } from "lucide-react";
 
@@ -78,6 +80,7 @@ export default function PdfChatShell() {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(true);
   const [isPreparing, setIsPreparing] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
 
   const isAuthenticated = workspace?.viewer.isAuthenticated ?? false;
   const remainingChats = workspace?.limits.remainingChats ?? null;
@@ -151,6 +154,25 @@ export default function PdfChatShell() {
     }
   }, [isAuthenticated, limitReached]);
 
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("bookify-theme");
+    const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const nextTheme =
+      savedTheme === "dark" || savedTheme === "light"
+        ? savedTheme
+        : systemPrefersDark
+          ? "dark"
+          : "light";
+
+    setTheme(nextTheme);
+  }, []);
+
+  useEffect(() => {
+    const root = window.document.documentElement;
+    root.classList.toggle("dark", theme === "dark");
+    window.localStorage.setItem("bookify-theme", theme);
+  }, [theme]);
+
   function scrollMessagesToBottom() {
     const viewport = messagesViewportRef.current;
     if (!viewport || !shouldAutoScrollRef.current) {
@@ -172,6 +194,10 @@ export default function PdfChatShell() {
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 
     shouldAutoScrollRef.current = distanceFromBottom < 96;
+  }
+
+  function toggleTheme() {
+    setTheme((current) => (current === "dark" ? "light" : "dark"));
   }
 
   async function pollDocumentStatus(documentId: string) {
@@ -398,7 +424,7 @@ export default function PdfChatShell() {
     : `${remainingChats ?? GUEST_CHAT_LIMIT} / ${GUEST_CHAT_LIMIT} chats left`;
 
   return (
-    <main className="h-screen overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
+    <main className="h-[100dvh] overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
       <div className="mx-auto flex h-full max-w-5xl flex-col overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-lg">
         <input
           ref={fileInputRef}
@@ -443,6 +469,18 @@ export default function PdfChatShell() {
 
             <div className="flex flex-wrap items-center gap-2">
               <Badge className="rounded-full px-3 py-1.5">{topBadge}</Badge>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={toggleTheme}
+                aria-label="Toggle dark mode"
+              >
+                {theme === "dark" ? (
+                  <Sun className="size-4" />
+                ) : (
+                  <Moon className="size-4" />
+                )}
+              </Button>
               {isAuthenticated ? (
                 <>
                   <div className="hidden rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground sm:block">
@@ -576,45 +614,47 @@ export default function PdfChatShell() {
           </section>
         ) : null}
 
-        <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] overflow-hidden">
           <div
             ref={messagesViewportRef}
             onScroll={handleMessagesScroll}
-            className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-5"
+            className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
           >
             {!document && !isWorkspaceLoading ? (
-              <div className="m-auto flex max-w-xl flex-col items-center justify-center gap-5 rounded-[1.5rem] border border-dashed border-border bg-background px-6 py-12 text-center">
-                <div className="space-y-2">
-                  <p className="text-lg font-medium text-foreground">
-                    Upload a PDF to start
-                  </p>
-                  <p className="max-w-md text-sm leading-6 text-muted-foreground">
-                    Guest mode gives one document and three questions. Log in if
-                    you want to keep going after that.
-                  </p>
-                </div>
-                <Button
-                  size="lg"
-                  className="h-11 rounded-xl px-5"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isPreparing || (!uploadAllowed && !isAuthenticated)}
-                >
-                  {isPreparing ? (
-                    <LoaderCircle className="size-4 animate-spin" />
-                  ) : (
-                    <FileText className="size-4" />
-                  )}
-                  Choose PDF
-                </Button>
+              <div className="flex min-h-full items-center justify-center">
+                <div className="flex max-w-xl flex-col items-center justify-center gap-5 rounded-[1.5rem] border border-dashed border-border bg-background px-6 py-12 text-center">
+                  <div className="space-y-2">
+                    <p className="text-lg font-medium text-foreground">
+                      Upload a PDF to start
+                    </p>
+                    <p className="max-w-md text-sm leading-6 text-muted-foreground">
+                      Guest mode gives one document and three questions. Log in if
+                      you want to keep going after that.
+                    </p>
+                  </div>
+                  <Button
+                    size="lg"
+                    className="h-11 rounded-xl px-5"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isPreparing || (!uploadAllowed && !isAuthenticated)}
+                  >
+                    {isPreparing ? (
+                      <LoaderCircle className="size-4 animate-spin" />
+                    ) : (
+                      <FileText className="size-4" />
+                    )}
+                    Choose PDF
+                  </Button>
 
-                {!uploadAllowed && !isAuthenticated ? (
-                  <p className="text-sm text-muted-foreground">
-                    Guest upload already used. Log in to upload another file.
-                  </p>
-                ) : null}
+                  {!uploadAllowed && !isAuthenticated ? (
+                    <p className="text-sm text-muted-foreground">
+                      Guest upload already used. Log in to upload another file.
+                    </p>
+                  ) : null}
+                </div>
               </div>
             ) : (
-              <div className="flex flex-col gap-4">
+              <div className="flex min-h-full flex-col gap-4 pb-2">
                 {messages.map((message) => (
                   <div
                     key={message.id}

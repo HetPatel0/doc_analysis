@@ -35,9 +35,9 @@
   --sidebar-accent-foreground: oklch(0.4015 0.0436 37.9587);
   --sidebar-border: oklch(0.8078 0 0);
   --sidebar-ring: oklch(0.7058 0 0);
-  --font-sans: Architects Daughter, sans-serif;
-  --font-serif: "Times New Roman", Times, serif;
-  --font-mono: "Courier New", Courier, monospace;
+  --font-sans: var(--font-mona-sans), sans-serif;
+  --font-serif: var(--font-ibm-plex-serif), serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
   --radius: 0.625rem;
   --shadow-x: 1px;
   --shadow-y: 4px;
@@ -90,9 +90,9 @@
   --sidebar-accent-foreground: oklch(0.3211 0 0);
   --sidebar-border: oklch(0.4276 0 0);
   --sidebar-ring: oklch(0.8078 0 0);
-  --font-sans: Architects Daughter, sans-serif;
-  --font-serif: Georgia, serif;
-  --font-mono: "Fira Code", "Courier New", monospace;
+  --font-sans: var(--font-mona-sans), sans-serif;
+  --font-serif: var(--font-ibm-plex-serif), serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
   --radius: 0.625rem;
   --shadow-x: 1px;
   --shadow-y: 4px;
@@ -175,7 +175,7 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply h-full overflow-hidden bg-background text-foreground;
     letter-spacing: var(--tracking-normal);
   }
 }
