@@ -55,6 +55,7 @@ type BackendUploadResponse = {
 
 type BackendChatResponse = {
   answer: string;
+  sources?: string[];
   detail?: string;
 };
 
@@ -430,7 +431,8 @@ export async function syncDocumentStatus(
 export async function chatWithDocumentForActor(
   actor: ActorContext,
   documentId: string,
-  message: string
+  message: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): Promise<ChatDocumentResponse> {
   const trimmedMessage = message.trim();
 
@@ -455,6 +457,7 @@ export async function chatWithDocumentForActor(
       body: JSON.stringify({
         document_id: documentId,
         message: trimmedMessage,
+        history,
       }),
       errorMessage: "Could not reach the PDF backend.",
     });
@@ -486,6 +489,7 @@ export async function chatWithDocumentForActor(
 
   return {
     answer: result.answer,
+    sources: result.sources ?? [],
     remainingChats:
       actor.type === "guest"
         ? Math.max(0, GUEST_CHAT_LIMIT - (currentChatCount + 1))

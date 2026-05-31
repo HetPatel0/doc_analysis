@@ -312,6 +312,13 @@ export default function PdfChatShell() {
     }
 
     const trimmedPrompt = prompt.trim();
+    const recentHistory = messages
+      .filter((message) => message.id !== "welcome")
+      .slice(-6)
+      .map((message) => ({
+        role: message.role,
+        content: message.content,
+      }));
 
     setMessages((current) => [
       ...current,
@@ -335,6 +342,7 @@ export default function PdfChatShell() {
         body: JSON.stringify({
           documentId: document.documentId,
           message: trimmedPrompt,
+          history: recentHistory,
         }),
       });
       const result =

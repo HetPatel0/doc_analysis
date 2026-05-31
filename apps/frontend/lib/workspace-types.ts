@@ -36,4 +36,5 @@ export type UploadDocumentResponse = {
 export type ChatDocumentResponse = {
   answer: string;
   remainingChats: number | null;
+  sources?: string[];
 };

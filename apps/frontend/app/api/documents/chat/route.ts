@@ -14,6 +14,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       documentId?: string;
       message?: string;
+      history?: Array<{ role: "user" | "assistant"; content: string }>;
     };
 
     if (!body.documentId || !body.message) {
@@ -24,7 +25,12 @@ export async function POST(request: Request) {
     }
 
     const response = NextResponse.json(
-      await chatWithDocumentForActor(actor, body.documentId, body.message)
+      await chatWithDocumentForActor(
+        actor,
+        body.documentId,
+        body.message,
+        body.history ?? []
+      )
     );
     return applyActorCookies(actor, response);
   } catch (error) {
