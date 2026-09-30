@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
+import shutil
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -46,10 +49,24 @@ WARM_ON_STARTUP = os.getenv("BOOKIFY_WARM_ON_STARTUP", "true").lower() in {
     "true",
     "yes",
 }
+BOOKIFY_API_SECRET = os.getenv("BOOKIFY_API_SECRET", "")
+MAX_UPLOAD_MB = int(os.getenv("BOOKIFY_MAX_UPLOAD_MB", "20"))
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 VECTORSTORES_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Bookify API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if WARM_ON_STARTUP:
+        # Warm the heavy indexing stack once at startup instead of during the first upload.
+        get_indexing_dependencies()
+        get_embedding_model()
+        get_prompt()
+    yield
+
+
+app = FastAPI(title="Bookify API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,6 +94,23 @@ class DocumentStatusResponse(BaseModel):
     status: str
     chunks_indexed: int | None = None
     error: str | None = None
+
+
+def require_backend_auth(
+    x_bookify_secret: str | None = Header(default=None, alias="X-Bookify-Secret"),
+) -> None:
+    if not BOOKIFY_API_SECRET:
+        return
+    if not secrets.compare_digest(x_bookify_secret or "", BOOKIFY_API_SECRET):
+        raise HTTPException(status_code=401, detail="Unauthorized.")
+
+
+def sanitize_file_name(raw_name: str | None) -> str:
+    name = Path(raw_name or "document.pdf").name.strip() or "document.pdf"
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._") or "document.pdf"
+    if not name.lower().endswith(".pdf"):
+        name = f"{name}.pdf"
+    return name[:128]
 
 
 @lru_cache
@@ -270,17 +304,6 @@ def ensure_document_exists(document_id: str) -> Path:
     return vectorstore_path
 
 
-@app.on_event("startup")
-def warm_runtime() -> None:
-    if not WARM_ON_STARTUP:
-        return
-
-    # Warm the heavy indexing stack once at startup instead of during the first upload.
-    get_indexing_dependencies()
-    get_embedding_model()
-    get_prompt()
-
-
 def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
     write_document_status(document_id, file_name=file_name, status="indexing")
 
@@ -347,23 +370,56 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/documents/{document_id}", response_model=DocumentStatusResponse)
+@app.get(
+    "/documents/{document_id}",
+    response_model=DocumentStatusResponse,
+    dependencies=[Depends(require_backend_auth)],
+)
 def get_document_status(document_id: str) -> DocumentStatusResponse:
     return read_document_status(document_id)
 
 
-@app.post("/upload")
+def delete_document_files(document_id: str) -> None:
+    shutil.rmtree(get_vectorstore_path(document_id), ignore_errors=True)
+    status_path = get_document_status_path(document_id)
+    if status_path.exists():
+        status_path.unlink()
+    for upload_path in UPLOADS_DIR.glob(f"{document_id}-*"):
+        if upload_path.is_file():
+            upload_path.unlink()
+
+
+@app.delete(
+    "/documents/{document_id}", dependencies=[Depends(require_backend_auth)]
+)
+def delete_document(document_id: str) -> dict[str, str]:
+    read_document_status(document_id)  # 404 if unknown
+    delete_document_files(document_id)
+    return {"document_id": document_id, "status": "deleted"}
+
+
+@app.post("/upload", dependencies=[Depends(require_backend_auth)])
 async def upload_pdf(
     background_tasks: BackgroundTasks, file: UploadFile = File(...)
 ) -> dict[str, str | int]:
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
 
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"PDF exceeds the {MAX_UPLOAD_MB}MB limit.",
+        )
+    if file_bytes[:4] != b"%PDF":
+        raise HTTPException(status_code=400, detail="File is not a valid PDF.")
+
     document_id = str(uuid4())
-    safe_name = Path(file.filename or "document.pdf").name
+    safe_name = sanitize_file_name(file.filename)
     upload_path = UPLOADS_DIR / f"{document_id}-{safe_name}"
 
-    file_bytes = await file.read()
     upload_path.write_bytes(file_bytes)
     write_document_status(document_id, file_name=safe_name, status="queued")
     background_tasks.add_task(index_pdf, document_id, safe_name, upload_path)
@@ -375,7 +431,9 @@ async def upload_pdf(
     }
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post(
+    "/chat", response_model=ChatResponse, dependencies=[Depends(require_backend_auth)]
+)
 def chat_with_document(request: ChatRequest) -> ChatResponse:
     from langchain_community.vectorstores import Chroma
 

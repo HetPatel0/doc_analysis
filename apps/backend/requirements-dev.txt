@@ -1,0 +1,4 @@
+# Dev-only tools (not needed for production deploys)
+ruff>=0.4,<1
+pytest>=8,<9
+httpx>=0.27

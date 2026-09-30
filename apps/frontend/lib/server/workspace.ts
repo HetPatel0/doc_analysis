@@ -20,6 +20,8 @@ const BACKEND_API_URL =
   process.env.NEXT_PUBLIC_API_URL ??
   "http://127.0.0.1:8000";
 
+const BACKEND_API_SECRET = process.env.BACKEND_API_SECRET ?? "";
+
 const GUEST_COOKIE_NAME = "bookify_guest";
 
 type SessionData = Awaited<ReturnType<typeof auth.api.getSession>>;
@@ -85,7 +87,14 @@ async function requestBackend<T>(
   const { errorMessage, ...requestInit } = init;
 
   try {
-    const response = await fetch(`${BACKEND_API_URL}${path}`, requestInit);
+    const headers = new Headers(init.headers ?? {});
+    if (BACKEND_API_SECRET && !headers.has("X-Bookify-Secret")) {
+      headers.set("X-Bookify-Secret", BACKEND_API_SECRET);
+    }
+    const response = await fetch(`${BACKEND_API_URL}${path}`, {
+      ...requestInit,
+      headers,
+    });
     const result = await readJson<T>(response);
     return { response, result };
   } catch {
@@ -396,6 +405,26 @@ export async function uploadDocumentForActor(
   return {
     document: toDocumentSummary(document)!,
   };
+}
+
+export async function deleteDocumentForActor(
+  actor: ActorContext,
+  documentId: string
+): Promise<void> {
+  await assertDocumentOwnership(actor, documentId);
+
+  const { response: backendResponse, result } = await requestBackend<{
+    detail?: string;
+  }>(`/documents/${documentId}`, {
+    method: "DELETE",
+    errorMessage: "Could not reach the PDF backend.",
+  });
+
+  if (!backendResponse.ok) {
+    throw new Error(result.detail ?? "Delete failed.");
+  }
+
+  await db.delete(documents).where(eq(documents.documentId, documentId));
 }
 
 export async function syncDocumentStatus(

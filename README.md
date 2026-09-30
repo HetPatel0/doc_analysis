@@ -127,6 +127,7 @@ Required frontend keys:
 - `DATABASE_URL`: Postgres connection string used by Drizzle and Better Auth.
 - `BETTER_AUTH_SECRET`: Random 32+ character secret for Better Auth sessions.
 - `BACKEND_API_URL`: Backend API URL for server-side frontend calls.
+- `BACKEND_API_SECRET`: Same value as backend `BOOKIFY_API_SECRET`.
 
 Recommended frontend keys:
 
@@ -145,6 +146,8 @@ which makes Vercel preview and production domains safer to support.
 MISTRAL_API_KEY=...
 MISTRAL_MODEL=mistral-small-2506
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+BOOKIFY_API_SECRET=...
+BOOKIFY_MAX_UPLOAD_MB=20
 BOOKIFY_STORAGE_DIR=
 BOOKIFY_UPLOADS_DIR=
 BOOKIFY_VECTORSTORES_DIR=
@@ -154,6 +157,7 @@ BOOKIFY_WARM_ON_STARTUP=true
 Required backend keys:
 
 - `MISTRAL_API_KEY`: Mistral API key used for embeddings and chat generation.
+- `BOOKIFY_API_SECRET`: Shared secret the frontend sends as `X-Bookify-Secret`. Leave empty only for local dev without auth; always set in production.
 
 Recommended backend keys:
 

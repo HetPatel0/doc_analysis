@@ -17,6 +17,7 @@ import {
   Moon,
   Paperclip,
   Sun,
+  Trash2,
   UserPlus,
 } from "lucide-react";
 
@@ -80,6 +81,7 @@ export default function PdfChatShell() {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(true);
   const [isPreparing, setIsPreparing] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
 
   const isAuthenticated = workspace?.viewer.isAuthenticated ?? false;
@@ -427,6 +429,43 @@ export default function PdfChatShell() {
     await loadWorkspace();
   }
 
+  async function handleDelete() {
+    if (!document?.documentId || isDeleting) {
+      return;
+    }
+
+    setIsDeleting(true);
+
+    try {
+      const response = await fetch(`/api/documents/${document.documentId}`, {
+        method: "DELETE",
+      });
+      const result = ((await response.json()) as { detail?: string }) ?? {};
+
+      if (!response.ok) {
+        throw new Error(result.detail ?? "Could not delete the document.");
+      }
+
+      setDocument(null);
+      setMessages(initialMessages);
+      await loadWorkspace();
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content:
+            error instanceof Error
+              ? error.message
+              : "Could not delete the document.",
+        },
+      ]);
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
   const topBadge = isAuthenticated
     ? "Unlimited chats"
     : `${remainingChats ?? GUEST_CHAT_LIMIT} / ${GUEST_CHAT_LIMIT} chats left`;
@@ -467,6 +506,19 @@ export default function PdfChatShell() {
                   {document.chunksIndexed ? (
                     <span>{document.chunksIndexed} chunks indexed</span>
                   ) : null}
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={isDeleting || isPreparing}
+                    className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 transition-colors hover:border-destructive/50 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isDeleting ? (
+                      <LoaderCircle className="size-3 animate-spin" />
+                    ) : (
+                      <Trash2 className="size-3" />
+                    )}
+                    Delete
+                  </button>
                 </div>
               ) : (
                 <p className="pt-1 text-xs text-muted-foreground">
