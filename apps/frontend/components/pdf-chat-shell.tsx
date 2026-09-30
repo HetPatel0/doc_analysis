@@ -16,6 +16,7 @@ import {
   LogOut,
   Moon,
   Paperclip,
+  Square,
   Sun,
   Trash2,
   UserPlus,
@@ -23,7 +24,6 @@ import {
 
 import { authClient } from "@/lib/auth-client";
 import type {
-  ChatDocumentResponse,
   DocumentSummary,
   UploadDocumentResponse,
   WorkspaceState,
@@ -32,15 +32,10 @@ import { GUEST_CHAT_LIMIT } from "@/lib/workspace-types";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ChatMessage, type Message } from "@/components/chat-message";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-
-type Message = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-};
 
 type ErrorResponse = {
   detail?: string;
@@ -65,6 +60,7 @@ export default function PdfChatShell() {
   const sessionQuery = authClient.useSession();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const shouldAutoScrollRef = useRef(true);
 
   const [workspace, setWorkspace] = useState<WorkspaceState | null>(null);
@@ -308,8 +304,29 @@ export default function PdfChatShell() {
     }
   }
 
+  function parseSseBuffer(buffer: string) {
+    const events = buffer.split("\n\n");
+    const remainder = events.pop() ?? "";
+    const parsed: Array<{ event: string; data: string }> = [];
+
+    for (const raw of events) {
+      let event = "message";
+      let data = "";
+      for (const line of raw.split("\n")) {
+        if (line.startsWith("event:")) {
+          event = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          data += line.slice(5).trim();
+        }
+      }
+      parsed.push({ event, data });
+    }
+
+    return { parsed, remainder };
+  }
+
   async function handleSend() {
-    if (!document?.documentId || !prompt.trim()) {
+    if (!document?.documentId || !prompt.trim() || isSending) {
       return;
     }
 
@@ -322,6 +339,10 @@ export default function PdfChatShell() {
         content: message.content,
       }));
 
+    const assistantId = crypto.randomUUID();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setMessages((current) => [
       ...current,
       {
@@ -329,14 +350,22 @@ export default function PdfChatShell() {
         role: "user",
         content: trimmedPrompt,
       },
+      {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        streaming: true,
+      },
     ]);
     setPrompt("");
     setIsSending(true);
     shouldAutoScrollRef.current = true;
     scrollMessagesToBottom();
 
+    let streamedChars = 0;
+
     try {
-      const response = await fetch("/api/documents/chat", {
+      const response = await fetch("/api/documents/chat/stream", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -346,43 +375,102 @@ export default function PdfChatShell() {
           message: trimmedPrompt,
           history: recentHistory,
         }),
+        signal: controller.signal,
       });
-      const result =
-        ((await response.json()) as ChatDocumentResponse & ErrorResponse) ?? {};
 
-      if (!response.ok || !result.answer) {
+      if (!response.ok || !response.body) {
+        const result =
+          ((await response.json().catch(() => null)) as ErrorResponse | null) ??
+          {};
         throw new Error(result.detail ?? "Could not send the message.");
       }
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: result.answer,
-        },
-      ]);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let readerDone = false;
+
+      while (!readerDone) {
+        const { value, done } = await reader.read();
+        readerDone = done;
+
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          const { parsed, remainder } = parseSseBuffer(buffer);
+          buffer = remainder;
+
+          for (const { event, data } of parsed) {
+            if (event === "token" && data) {
+              const { token } = JSON.parse(data) as { token: string };
+              streamedChars += token.length;
+              setMessages((current) =>
+                current.map((item) =>
+                  item.id === assistantId
+                    ? { ...item, content: item.content + token }
+                    : item
+                )
+              );
+              scrollMessagesToBottom();
+            } else if (event === "error") {
+              const { detail } = JSON.parse(data) as { detail?: string };
+              throw new Error(detail ?? "Chat request failed.");
+            }
+          }
+        }
+      }
+
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === assistantId ? { ...item, streaming: false } : item
+        )
+      );
       await loadWorkspace();
       scrollMessagesToBottom();
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === assistantId ? { ...item, streaming: false } : item
+          )
+        );
+        return;
+      }
+
       const message =
         error instanceof Error ? error.message : "Could not send the message.";
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: message,
-        },
-      ]);
+      if (streamedChars === 0) {
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === assistantId
+              ? { ...item, content: message, streaming: false }
+              : item
+          )
+        );
+      } else {
+        setMessages((current) => [
+          ...current.map((item) =>
+            item.id === assistantId ? { ...item, streaming: false } : item
+          ),
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: message,
+          },
+        ]);
+      }
 
       if (/guest chats|log in/i.test(message)) {
         setShowAuthForm(true);
       }
     } finally {
       setIsSending(false);
+      abortRef.current = null;
     }
+  }
+
+  function handleStop() {
+    abortRef.current?.abort();
   }
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
@@ -716,22 +804,7 @@ export default function PdfChatShell() {
             ) : (
               <div className="flex min-h-full flex-col gap-4 pb-2">
                 {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={cn(
-                      "max-w-[52rem] rounded-2xl px-4 py-3",
-                      message.role === "assistant"
-                        ? "self-start border border-border bg-background text-foreground"
-                        : "self-end bg-primary text-primary-foreground"
-                    )}
-                  >
-                    <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] opacity-60">
-                      {message.role === "assistant" ? "Assistant" : "You"}
-                    </p>
-                    <p className="whitespace-pre-wrap text-sm leading-6">
-                      {message.content}
-                    </p>
-                  </div>
+                  <ChatMessage key={message.id} message={message} />
                 ))}
               </div>
             )}
@@ -815,11 +888,12 @@ export default function PdfChatShell() {
                 <Button
                   size="icon-lg"
                   className="rounded-xl"
-                  onClick={handleSend}
-                  disabled={!canSend}
+                  onClick={isSending ? handleStop : handleSend}
+                  disabled={!isSending && !canSend}
+                  aria-label={isSending ? "Stop generating" : "Send message"}
                 >
                   {isSending ? (
-                    <LoaderCircle className="size-4 animate-spin" />
+                    <Square className="size-4" />
                   ) : (
                     <ArrowUp className="size-4" />
                   )}

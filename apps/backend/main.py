@@ -14,6 +14,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
@@ -431,10 +432,7 @@ async def upload_pdf(
     }
 
 
-@app.post(
-    "/chat", response_model=ChatResponse, dependencies=[Depends(require_backend_auth)]
-)
-def chat_with_document(request: ChatRequest) -> ChatResponse:
+def prepare_chat(request: ChatRequest) -> tuple[Any, list[str]]:
     from langchain_community.vectorstores import Chroma
 
     vectorstore_path = ensure_document_exists(request.document_id)
@@ -465,9 +463,47 @@ def chat_with_document(request: ChatRequest) -> ChatResponse:
             "question": request.message,
         }
     )
+    return final_prompt, sources
 
+
+def sse_event(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+@app.post(
+    "/chat", response_model=ChatResponse, dependencies=[Depends(require_backend_auth)]
+)
+def chat_with_document(request: ChatRequest) -> ChatResponse:
+    final_prompt, sources = prepare_chat(request)
     response = get_llm().invoke(final_prompt)
     return ChatResponse(
         answer=with_source_footer(response.content, sources),
         sources=sources,
     )
+
+
+@app.post("/chat/stream", dependencies=[Depends(require_backend_auth)])
+def chat_stream_with_document(request: ChatRequest) -> StreamingResponse:
+    final_prompt, sources = prepare_chat(request)
+
+    def generate() -> Any:
+        yield sse_event("sources", {"sources": sources})
+        streamed: list[str] = []
+        try:
+            for chunk in get_llm().stream(final_prompt):
+                text = chunk.content if isinstance(chunk.content, str) else ""
+                if text:
+                    streamed.append(text)
+                    yield sse_event("token", {"token": text})
+        except Exception as exc:
+            yield sse_event("error", {"detail": str(exc)})
+            return
+
+        full_text = "".join(streamed)
+        footer_text = with_source_footer(full_text, sources)
+        if len(footer_text) > len(full_text):
+            yield sse_event("token", {"token": footer_text[len(full_text):]})
+
+        yield sse_event("done", {})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")

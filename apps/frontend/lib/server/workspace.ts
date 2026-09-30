@@ -427,6 +427,79 @@ export async function deleteDocumentForActor(
   await db.delete(documents).where(eq(documents.documentId, documentId));
 }
 
+export async function streamChatForActor(
+  actor: ActorContext,
+  documentId: string,
+  message: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
+): Promise<ReadableStream<Uint8Array>> {
+  const trimmedMessage = message.trim();
+
+  if (!trimmedMessage) {
+    throw new Error("Message is required.");
+  }
+
+  await assertDocumentOwnership(actor, documentId);
+
+  const currentChatCount = actor.usage?.chatCount ?? 0;
+
+  if (actor.type === "guest" && currentChatCount >= GUEST_CHAT_LIMIT) {
+    throw new Error("You have used all 3 guest chats. Log in to continue.");
+  }
+
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (BACKEND_API_SECRET) {
+    headers.set("X-Bookify-Secret", BACKEND_API_SECRET);
+  }
+
+  let backendResponse: Response;
+  try {
+    backendResponse = await fetch(`${BACKEND_API_URL}/chat/stream`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        document_id: documentId,
+        message: trimmedMessage,
+        history,
+      }),
+    });
+  } catch {
+    throw new Error(
+      `Could not reach the PDF backend. The backend service is unreachable at ${BACKEND_API_URL}.`
+    );
+  }
+
+  if (!backendResponse.ok || !backendResponse.body) {
+    const result = (await backendResponse.json().catch(() => null)) as {
+      detail?: string;
+    } | null;
+    throw new Error(result?.detail ?? "Chat request failed.");
+  }
+
+  await db
+    .update(usageSubjects)
+    .set({
+      chatCount: sql`${usageSubjects.chatCount} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(usageSubjects.ownerType, actor.type),
+        eq(usageSubjects.ownerId, actor.ownerId)
+      )
+    );
+
+  await db
+    .update(documents)
+    .set({
+      chatsUsed: sql`${documents.chatsUsed} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(eq(documents.documentId, documentId));
+
+  return backendResponse.body;
+}
+
 export async function syncDocumentStatus(
   actor: ActorContext,
   documentId: string
