@@ -8,6 +8,13 @@
       "when": 1775610656595,
       "tag": "0000_small_thor_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790950579519,
+      "tag": "0001_strong_brood",
+      "breakpoints": true
     }
   ]
 }

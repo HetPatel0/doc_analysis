@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app import dependencies as deps
+from app.observability import capture_exception
 from app.schemas import ChatRequest, ChatResponse
 from app.security import require_backend_auth
 from app.services import chat as chat_service
@@ -45,6 +46,7 @@ def chat_stream_with_document(request: ChatRequest) -> StreamingResponse:
                     streamed.append(text)
                     yield sse_event("token", {"token": text})
         except Exception as exc:
+            capture_exception(exc)
             yield sse_event("error", {"detail": str(exc)})
             return
 

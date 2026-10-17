@@ -47,6 +47,12 @@ class Settings:
     api_secret: str = os.getenv("BOOKIFY_API_SECRET", "")
     max_upload_mb: int = int(os.getenv("BOOKIFY_MAX_UPLOAD_MB", "20"))
 
+    sentry_dsn: str = os.getenv("SENTRY_DSN", "")
+    sentry_environment: str = os.getenv("SENTRY_ENVIRONMENT", "production")
+    sentry_traces_sample_rate: float = float(
+        os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")
+    )
+
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024

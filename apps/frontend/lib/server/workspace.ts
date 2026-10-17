@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { documents, usageSubjects } from "@/lib/db/schema";
+import { documents, messages, usageSubjects } from "@/lib/db/schema";
 import {
   GUEST_CHAT_LIMIT,
   GUEST_UPLOAD_LIMIT,
@@ -424,7 +424,71 @@ export async function deleteDocumentForActor(
     throw new Error(result.detail ?? "Delete failed.");
   }
 
+  await db.delete(messages).where(eq(messages.documentId, documentId));
   await db.delete(documents).where(eq(documents.documentId, documentId));
+}
+
+const MAX_MESSAGE_CHARS = 20000;
+
+export type StoredMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+};
+
+export async function listMessagesForActor(
+  actor: ActorContext,
+  documentId: string
+): Promise<StoredMessage[]> {
+  await assertDocumentOwnership(actor, documentId);
+
+  const rows = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.documentId, documentId))
+    .orderBy(asc(messages.createdAt))
+    .limit(200);
+
+  return rows.map((row) => ({
+    id: row.id,
+    role: row.role as "user" | "assistant",
+    content: row.content,
+    createdAt: row.createdAt.toISOString(),
+  }));
+}
+
+export async function saveMessageForActor(
+  actor: ActorContext,
+  documentId: string,
+  role: "user" | "assistant",
+  content: string
+): Promise<StoredMessage> {
+  await assertDocumentOwnership(actor, documentId);
+
+  const trimmed = content.trim();
+  if (role !== "user" && role !== "assistant") {
+    throw new Error("Role must be user or assistant.");
+  }
+  if (!trimmed) {
+    throw new Error("Message content is required.");
+  }
+
+  const [row] = await db
+    .insert(messages)
+    .values({
+      documentId,
+      role,
+      content: trimmed.slice(0, MAX_MESSAGE_CHARS),
+    })
+    .returning();
+
+  return {
+    id: row.id,
+    role: row.role as "user" | "assistant",
+    content: row.content,
+    createdAt: row.createdAt.toISOString(),
+  };
 }
 
 export async function streamChatForActor(
@@ -475,6 +539,12 @@ export async function streamChatForActor(
     } | null;
     throw new Error(result?.detail ?? "Chat request failed.");
   }
+
+  await db.insert(messages).values({
+    documentId,
+    role: "user",
+    content: trimmedMessage.slice(0, MAX_MESSAGE_CHARS),
+  });
 
   await db
     .update(usageSubjects)
@@ -567,6 +637,19 @@ export async function chatWithDocumentForActor(
   if (!backendResponse.ok || !result.answer) {
     throw new Error(result.detail ?? "Chat request failed.");
   }
+
+  await db.insert(messages).values([
+    {
+      documentId,
+      role: "user",
+      content: trimmedMessage.slice(0, MAX_MESSAGE_CHARS),
+    },
+    {
+      documentId,
+      role: "assistant",
+      content: result.answer.slice(0, MAX_MESSAGE_CHARS),
+    },
+  ]);
 
   await db
     .update(usageSubjects)

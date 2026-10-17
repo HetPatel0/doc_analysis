@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from app import dependencies as deps
 from app.config import settings
+from app.observability import capture_exception
 from app.schemas import DocumentStatusResponse
 from app.services import retrieval
 
@@ -142,6 +143,7 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
             chunks_indexed=len(chunks),
         )
     except Exception as exc:
+        capture_exception(exc)
         write_document_status(
             document_id,
             file_name=file_name,

@@ -120,6 +120,12 @@ BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 BACKEND_API_URL=http://127.0.0.1:8000
 DATABASE_URL=postgresql://...
 BETTER_AUTH_SECRET=...
+NEXT_PUBLIC_MAX_UPLOAD_MB=20
+NEXT_PUBLIC_SENTRY_DSN=
+SENTRY_DSN=
+SENTRY_ORG=
+SENTRY_PROJECT=
+SENTRY_AUTH_TOKEN=
 ```
 
 Required frontend keys:
@@ -136,6 +142,9 @@ Recommended frontend keys:
 - `BETTER_AUTH_ALLOWED_HOSTS`: Comma-separated hosts Better Auth can use.
 - `BETTER_AUTH_TRUSTED_ORIGINS`: Comma-separated trusted origins for auth requests.
 - `NEXT_PUBLIC_API_URL`: Optional browser-visible backend API fallback if `BACKEND_API_URL` is not set.
+- `NEXT_PUBLIC_MAX_UPLOAD_MB`: Client-side upload size guard. Keep in sync with backend `BOOKIFY_MAX_UPLOAD_MB`.
+- `NEXT_PUBLIC_SENTRY_DSN` / `SENTRY_DSN`: Optional Sentry DSNs for browser and server error reporting. Leave blank to disable.
+- `SENTRY_AUTH_TOKEN`: Optional Sentry auth token for source map uploads during `next build`.
 
 `BETTER_AUTH_ALLOWED_HOSTS` is used for dynamic Better Auth base URL handling,
 which makes Vercel preview and production domains safer to support.
@@ -152,6 +161,9 @@ BOOKIFY_STORAGE_DIR=
 BOOKIFY_UPLOADS_DIR=
 BOOKIFY_VECTORSTORES_DIR=
 BOOKIFY_WARM_ON_STARTUP=true
+SENTRY_DSN=
+SENTRY_ENVIRONMENT=production
+SENTRY_TRACES_SAMPLE_RATE=0.1
 ```
 
 Required backend keys:
@@ -167,6 +179,9 @@ Recommended backend keys:
 - `BOOKIFY_UPLOADS_DIR`: Upload storage directory. Defaults under `BOOKIFY_STORAGE_DIR`.
 - `BOOKIFY_VECTORSTORES_DIR`: Vector index storage directory. Defaults under `BOOKIFY_STORAGE_DIR`.
 - `BOOKIFY_WARM_ON_STARTUP`: Whether to warm dependencies on startup.
+- `SENTRY_DSN`: Optional Sentry DSN for backend error reporting. Leave blank to disable.
+- `SENTRY_ENVIRONMENT`: Sentry environment name. Defaults to `production`.
+- `SENTRY_TRACES_SAMPLE_RATE`: Sentry performance sample rate. Defaults to `0.1`.
 
 If `BOOKIFY_STORAGE_DIR` is set, the backend will store uploads and vector
 indexes under that directory by default. On Railway, point this at your mounted
@@ -193,6 +208,12 @@ BACKEND_API_URL=https://your-backend-domain
 NEXT_PUBLIC_API_URL=https://your-backend-domain
 DATABASE_URL=postgresql://...
 BETTER_AUTH_SECRET=...
+NEXT_PUBLIC_MAX_UPLOAD_MB=20
+NEXT_PUBLIC_SENTRY_DSN=
+SENTRY_DSN=
+SENTRY_ORG=
+SENTRY_PROJECT=
+SENTRY_AUTH_TOKEN=
 ```
 
 ### Backend on Railway
@@ -212,6 +233,9 @@ BOOKIFY_STORAGE_DIR=/app/data
 BOOKIFY_UPLOADS_DIR=/app/data/uploads
 BOOKIFY_VECTORSTORES_DIR=/app/data/vectorstores
 BOOKIFY_WARM_ON_STARTUP=true
+SENTRY_DSN=
+SENTRY_ENVIRONMENT=production
+SENTRY_TRACES_SAMPLE_RATE=0.1
 ```
 
 The frontend expects `BACKEND_API_URL` for server-to-server calls and falls back

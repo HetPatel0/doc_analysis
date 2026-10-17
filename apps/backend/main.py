@@ -14,7 +14,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import dependencies as deps
 from app.config import settings
+from app.observability import init_sentry
 from app.routers import chat, documents, health
+
+init_sentry()
 
 
 @asynccontextmanager

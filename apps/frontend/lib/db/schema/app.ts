@@ -68,3 +68,19 @@ export const documents = pgTable(
     ownerIdx: index("document_owner_idx").on(table.ownerType, table.ownerId),
   })
 );
+
+export const messages = pgTable(
+  "message",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    documentId: text("document_id").notNull(),
+    role: text("role").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    documentIdx: index("message_document_idx").on(table.documentId),
+  })
+);

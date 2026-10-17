@@ -1,17 +1,10 @@
 "use client";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ChangeEvent,
-  type FormEvent,
-} from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import {
   ArrowUp,
   FileText,
   LoaderCircle,
-  LockKeyhole,
   LogIn,
   LogOut,
   Moon,
@@ -23,23 +16,21 @@ import {
 } from "lucide-react";
 
 import { authClient } from "@/lib/auth-client";
-import type {
-  DocumentSummary,
-  UploadDocumentResponse,
-  WorkspaceState,
-} from "@/lib/workspace-types";
-import { GUEST_CHAT_LIMIT } from "@/lib/workspace-types";
+import { toErrorMessage } from "@/lib/errors";
+import { uploadPdfWithProgress, validatePdfFile } from "@/lib/upload";
+import { GUEST_CHAT_LIMIT, type DocumentSummary } from "@/lib/workspace-types";
 
+import { AuthForm, type AuthMode } from "@/components/auth-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChatMessage, type Message } from "@/components/chat-message";
-import { Input } from "@/components/ui/input";
+import { ChatMessage } from "@/components/chat-message";
+import { PdfDropzone } from "@/components/pdf-dropzone";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
+import { useChat } from "@/hooks/use-chat";
+import { useTheme } from "@/hooks/use-theme";
+import { useWorkspace } from "@/hooks/use-workspace";
 
-type ErrorResponse = {
-  detail?: string;
-};
+type ErrorResponse = { detail?: string };
 
 const starterPrompts = [
   "Summarize the PDF in five bullet points.",
@@ -47,96 +38,62 @@ const starterPrompts = [
   "Explain the main argument in plain English.",
 ];
 
-const initialMessages: Message[] = [
-  {
-    id: "welcome",
-    role: "assistant",
-    content:
-      "Upload one PDF to begin. Guest mode allows one document and three chat messages before login is required.",
-  },
-];
-
 export default function PdfChatShell() {
   const sessionQuery = authClient.useSession();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const shouldAutoScrollRef = useRef(true);
 
-  const [workspace, setWorkspace] = useState<WorkspaceState | null>(null);
-  const [document, setDocument] = useState<DocumentSummary | null>(null);
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
-  const [prompt, setPrompt] = useState("");
-  const [authMode, setAuthMode] = useState<"sign-in" | "sign-up">("sign-in");
-  const [showAuthForm, setShowAuthForm] = useState(false);
-  const [authName, setAuthName] = useState("");
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [isAuthPending, setIsAuthPending] = useState(false);
-  const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(true);
-  const [isPreparing, setIsPreparing] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const { theme, toggleTheme } = useTheme();
+  const workspace = useWorkspace();
 
-  const isAuthenticated = workspace?.viewer.isAuthenticated ?? false;
-  const remainingChats = workspace?.limits.remainingChats ?? null;
-  const limitReached = workspace?.limits.limitReached ?? false;
-  const uploadAllowed = workspace?.limits.uploadAllowed ?? true;
+  const [authMode, setAuthMode] = useState<AuthMode>("sign-in");
+  const [showAuthForm, setShowAuthForm] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  function scrollMessagesToBottom() {
+    const viewport = messagesViewportRef.current;
+    if (!viewport || !shouldAutoScrollRef.current) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+  }
+
+  const chat = useChat({
+    document: workspace.document,
+    onStreamUpdate: scrollMessagesToBottom,
+    onAfterSend: () => {
+      void workspace.refresh().catch(() => undefined);
+    },
+    onLimitReached: () => setShowAuthForm(true),
+  });
+
+  const document = workspace.document;
+  const isAuthenticated = workspace.workspace?.viewer.isAuthenticated ?? false;
+  const remainingChats = workspace.workspace?.limits.remainingChats ?? null;
+  const limitReached = workspace.workspace?.limits.limitReached ?? false;
+  const uploadAllowed = workspace.workspace?.limits.uploadAllowed ?? true;
   const documentReady = document?.status === "ready";
 
   const canSend =
     Boolean(document?.documentId) &&
     documentReady &&
-    Boolean(prompt.trim()) &&
-    !isSending &&
+    Boolean(chat.prompt.trim()) &&
+    !chat.isSending &&
     !isPreparing &&
     (!limitReached || isAuthenticated);
 
   async function loadWorkspace() {
-    setIsWorkspaceLoading(true);
-
     try {
-      const response = await fetch("/api/workspace", {
-        cache: "no-store",
-      });
-      const result = ((await response.json()) as WorkspaceState & ErrorResponse) ?? {};
-
-      if (!response.ok) {
-        throw new Error(result.detail ?? "Could not load workspace.");
-      }
-
-      setWorkspace(result);
-      setDocument(result.activeDocument);
-
-      if (result.activeDocument && messages.length === 1 && messages[0]?.id === "welcome") {
-        setMessages([
-          {
-            id: "workspace-document",
-            role: "assistant",
-            content: `Current document: "${result.activeDocument.fileName}". ${
-              result.activeDocument.status === "ready"
-                ? "You can ask questions now."
-                : "Indexing is still in progress."
-            }`,
-          },
-        ]);
-      }
+      await workspace.refresh();
     } catch (error) {
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content:
-            error instanceof Error
-              ? error.message
-              : "Could not load the workspace.",
-        },
-      ]);
-    } finally {
-      setIsWorkspaceLoading(false);
+      chat.appendAssistant(
+        toErrorMessage(error, "Could not load the workspace.")
+      );
     }
   }
 
@@ -152,36 +109,6 @@ export default function PdfChatShell() {
     }
   }, [isAuthenticated, limitReached]);
 
-  useEffect(() => {
-    const savedTheme = window.localStorage.getItem("bookify-theme");
-    const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const nextTheme =
-      savedTheme === "dark" || savedTheme === "light"
-        ? savedTheme
-        : systemPrefersDark
-          ? "dark"
-          : "light";
-
-    setTheme(nextTheme);
-  }, []);
-
-  useEffect(() => {
-    const root = window.document.documentElement;
-    root.classList.toggle("dark", theme === "dark");
-    window.localStorage.setItem("bookify-theme", theme);
-  }, [theme]);
-
-  function scrollMessagesToBottom() {
-    const viewport = messagesViewportRef.current;
-    if (!viewport || !shouldAutoScrollRef.current) {
-      return;
-    }
-
-    requestAnimationFrame(() => {
-      viewport.scrollTop = viewport.scrollHeight;
-    });
-  }
-
   function handleMessagesScroll() {
     const viewport = messagesViewportRef.current;
     if (!viewport) {
@@ -194,10 +121,6 @@ export default function PdfChatShell() {
     shouldAutoScrollRef.current = distanceFromBottom < 96;
   }
 
-  function toggleTheme() {
-    setTheme((current) => (current === "dark" ? "light" : "dark"));
-  }
-
   async function pollDocumentStatus(documentId: string) {
     for (let attempt = 0; attempt < 120; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -205,24 +128,20 @@ export default function PdfChatShell() {
       const response = await fetch(`/api/documents/${documentId}`, {
         cache: "no-store",
       });
-      const result = ((await response.json()) as DocumentSummary & ErrorResponse) ?? {};
+      const result =
+        ((await response.json()) as DocumentSummary & ErrorResponse) ?? {};
 
       if (!response.ok || !result.documentId) {
         throw new Error(result.detail ?? "Could not fetch document status.");
       }
 
-      setDocument(result);
+      workspace.setDocument(result);
 
       if (result.status === "ready") {
-        await loadWorkspace();
-        setMessages((current) => [
-          ...current,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: `The document is ready. Indexed ${result.chunksIndexed ?? 0} chunks from "${result.fileName}".`,
-          },
-        ]);
+        await workspace.refresh().catch(() => undefined);
+        chat.appendAssistant(
+          `The document is ready. Indexed ${result.chunksIndexed ?? 0} chunks from "${result.fileName}".`
+        );
         return;
       }
 
@@ -234,329 +153,82 @@ export default function PdfChatShell() {
     throw new Error("Indexing is taking too long. Please try again shortly.");
   }
 
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-
-    if (!file) {
-      return;
-    }
-
-    if (file.type !== "application/pdf") {
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: "Only PDF files are supported.",
-        },
-      ]);
+  async function handleUpload(file: File) {
+    const validationError = validatePdfFile(file);
+    if (validationError) {
+      chat.appendAssistant(validationError);
       return;
     }
 
     setIsPreparing(true);
+    setUploadProgress(0);
     shouldAutoScrollRef.current = true;
-    setMessages([
-      {
-        id: "uploading-document",
-        role: "assistant",
-        content: `Uploading "${file.name}" and preparing the document.`,
-      },
-    ]);
-
-    const formData = new FormData();
-    formData.append("file", file);
 
     try {
-      const response = await fetch("/api/documents/upload", {
-        method: "POST",
-        body: formData,
-      });
-      const result =
-        ((await response.json()) as UploadDocumentResponse & ErrorResponse) ?? {};
+      const result = await uploadPdfWithProgress(file, setUploadProgress);
 
-      if (!response.ok || !result.document) {
-        throw new Error(result.detail ?? "Could not upload the PDF.");
+      if (!result.document) {
+        throw new Error("Could not upload the PDF.");
       }
 
-      setDocument(result.document);
-      await loadWorkspace();
+      workspace.setDocument(result.document);
+      await workspace.refresh().catch(() => undefined);
       await pollDocumentStatus(result.document.documentId);
       scrollMessagesToBottom();
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Could not upload the PDF.";
+      const message = toErrorMessage(error, "Could not upload the PDF.");
+      chat.appendAssistant(message);
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: message,
-        },
-      ]);
-
-      if (/Guest mode/i.test(message)) {
+      if (/guest mode/i.test(message)) {
         setShowAuthForm(true);
       }
     } finally {
       setIsPreparing(false);
+      setUploadProgress(0);
     }
   }
 
-  function parseSseBuffer(buffer: string) {
-    const events = buffer.split("\n\n");
-    const remainder = events.pop() ?? "";
-    const parsed: Array<{ event: string; data: string }> = [];
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
 
-    for (const raw of events) {
-      let event = "message";
-      let data = "";
-      for (const line of raw.split("\n")) {
-        if (line.startsWith("event:")) {
-          event = line.slice(6).trim();
-        } else if (line.startsWith("data:")) {
-          data += line.slice(5).trim();
-        }
-      }
-      parsed.push({ event, data });
-    }
-
-    return { parsed, remainder };
-  }
-
-  async function handleSend() {
-    if (!document?.documentId || !prompt.trim() || isSending) {
-      return;
-    }
-
-    const trimmedPrompt = prompt.trim();
-    const recentHistory = messages
-      .filter((message) => message.id !== "welcome")
-      .slice(-6)
-      .map((message) => ({
-        role: message.role,
-        content: message.content,
-      }));
-
-    const assistantId = crypto.randomUUID();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setMessages((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: trimmedPrompt,
-      },
-      {
-        id: assistantId,
-        role: "assistant",
-        content: "",
-        streaming: true,
-      },
-    ]);
-    setPrompt("");
-    setIsSending(true);
-    shouldAutoScrollRef.current = true;
-    scrollMessagesToBottom();
-
-    let streamedChars = 0;
-
-    try {
-      const response = await fetch("/api/documents/chat/stream", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          documentId: document.documentId,
-          message: trimmedPrompt,
-          history: recentHistory,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok || !response.body) {
-        const result =
-          ((await response.json().catch(() => null)) as ErrorResponse | null) ??
-          {};
-        throw new Error(result.detail ?? "Could not send the message.");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let readerDone = false;
-
-      while (!readerDone) {
-        const { value, done } = await reader.read();
-        readerDone = done;
-
-        if (value) {
-          buffer += decoder.decode(value, { stream: true });
-          const { parsed, remainder } = parseSseBuffer(buffer);
-          buffer = remainder;
-
-          for (const { event, data } of parsed) {
-            if (event === "token" && data) {
-              const { token } = JSON.parse(data) as { token: string };
-              streamedChars += token.length;
-              setMessages((current) =>
-                current.map((item) =>
-                  item.id === assistantId
-                    ? { ...item, content: item.content + token }
-                    : item
-                )
-              );
-              scrollMessagesToBottom();
-            } else if (event === "error") {
-              const { detail } = JSON.parse(data) as { detail?: string };
-              throw new Error(detail ?? "Chat request failed.");
-            }
-          }
-        }
-      }
-
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === assistantId ? { ...item, streaming: false } : item
-        )
-      );
-      await loadWorkspace();
-      scrollMessagesToBottom();
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        setMessages((current) =>
-          current.map((item) =>
-            item.id === assistantId ? { ...item, streaming: false } : item
-          )
-        );
-        return;
-      }
-
-      const message =
-        error instanceof Error ? error.message : "Could not send the message.";
-
-      if (streamedChars === 0) {
-        setMessages((current) =>
-          current.map((item) =>
-            item.id === assistantId
-              ? { ...item, content: message, streaming: false }
-              : item
-          )
-        );
-      } else {
-        setMessages((current) => [
-          ...current.map((item) =>
-            item.id === assistantId ? { ...item, streaming: false } : item
-          ),
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: message,
-          },
-        ]);
-      }
-
-      if (/guest chats|log in/i.test(message)) {
-        setShowAuthForm(true);
-      }
-    } finally {
-      setIsSending(false);
-      abortRef.current = null;
-    }
-  }
-
-  function handleStop() {
-    abortRef.current?.abort();
-  }
-
-  async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    setAuthError(null);
-    setIsAuthPending(true);
-
-    try {
-      const result =
-        authMode === "sign-in"
-          ? await authClient.signIn.email({
-              email: authEmail,
-              password: authPassword,
-            })
-          : await authClient.signUp.email({
-              name: authName,
-              email: authEmail,
-              password: authPassword,
-            });
-
-      if (result.error) {
-        throw new Error(result.error.message ?? "Authentication failed.");
-      }
-
-      setAuthName("");
-      setAuthEmail("");
-      setAuthPassword("");
-      setShowAuthForm(false);
-      await loadWorkspace();
-    } catch (error) {
-      setAuthError(
-        error instanceof Error ? error.message : "Authentication failed."
-      );
-    } finally {
-      setIsAuthPending(false);
+    if (file) {
+      void handleUpload(file);
     }
   }
 
   async function handleSignOut() {
     await authClient.signOut();
-    setDocument(null);
-    setMessages(initialMessages);
+    workspace.setDocument(null);
+    setShowAuthForm(false);
     await loadWorkspace();
   }
 
   async function handleDelete() {
-    if (!document?.documentId || isDeleting) {
+    if (!document?.documentId || workspace.isDeleting) {
       return;
     }
 
-    setIsDeleting(true);
-
     try {
-      const response = await fetch(`/api/documents/${document.documentId}`, {
-        method: "DELETE",
-      });
-      const result = ((await response.json()) as { detail?: string }) ?? {};
-
-      if (!response.ok) {
-        throw new Error(result.detail ?? "Could not delete the document.");
-      }
-
-      setDocument(null);
-      setMessages(initialMessages);
+      await workspace.deleteDocument(document.documentId);
       await loadWorkspace();
     } catch (error) {
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content:
-            error instanceof Error
-              ? error.message
-              : "Could not delete the document.",
-        },
-      ]);
-    } finally {
-      setIsDeleting(false);
+      chat.appendAssistant(
+        toErrorMessage(error, "Could not delete the document.")
+      );
     }
+  }
+
+  async function handleAuthenticated() {
+    setShowAuthForm(false);
+    await loadWorkspace();
   }
 
   const topBadge = isAuthenticated
     ? "Unlimited chats"
     : `${remainingChats ?? GUEST_CHAT_LIMIT} / ${GUEST_CHAT_LIMIT} chats left`;
+
+  const uploadDisabled = isPreparing || (!uploadAllowed && !isAuthenticated);
 
   return (
     <main className="h-[100dvh] overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
@@ -597,10 +269,10 @@ export default function PdfChatShell() {
                   <button
                     type="button"
                     onClick={handleDelete}
-                    disabled={isDeleting || isPreparing}
+                    disabled={workspace.isDeleting || isPreparing}
                     className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 transition-colors hover:border-destructive/50 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {isDeleting ? (
+                    {workspace.isDeleting ? (
                       <LoaderCircle className="size-3 animate-spin" />
                     ) : (
                       <Trash2 className="size-3" />
@@ -632,7 +304,7 @@ export default function PdfChatShell() {
               {isAuthenticated ? (
                 <>
                   <div className="hidden rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground sm:block">
-                    {workspace?.viewer.email ?? "Signed in"}
+                    {workspace.workspace?.viewer.email ?? "Signed in"}
                   </div>
                   <Button variant="outline" onClick={handleSignOut}>
                     <LogOut className="size-4" />
@@ -667,108 +339,30 @@ export default function PdfChatShell() {
         </header>
 
         {showAuthForm && !isAuthenticated ? (
-          <section className="border-b border-border bg-background/70 px-4 py-4 sm:px-5">
-            <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 sm:p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium text-foreground">
-                    {authMode === "sign-in" ? "Log in to continue" : "Create an account"}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Guest mode is capped at one PDF and three chats.
-                  </p>
-                </div>
-                <Badge variant="outline" className="rounded-full px-3 py-1">
-                  <LockKeyhole className="mr-1 size-3.5" />
-                  Auth required for more usage
-                </Badge>
-              </div>
-
-              <form className="grid gap-3 sm:grid-cols-2" onSubmit={handleAuthSubmit}>
-                {authMode === "sign-up" ? (
-                  <Input
-                    value={authName}
-                    onChange={(event) => setAuthName(event.target.value)}
-                    placeholder="Full name"
-                    autoComplete="name"
-                    required
-                  />
-                ) : null}
-                <Input
-                  value={authEmail}
-                  onChange={(event) => setAuthEmail(event.target.value)}
-                  placeholder="Email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  className={cn(authMode === "sign-in" && "sm:col-span-2")}
-                />
-                <Input
-                  value={authPassword}
-                  onChange={(event) => setAuthPassword(event.target.value)}
-                  placeholder="Password"
-                  type="password"
-                  autoComplete={
-                    authMode === "sign-in" ? "current-password" : "new-password"
-                  }
-                  required
-                  className="sm:col-span-2"
-                />
-
-                <div className="sm:col-span-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="text-sm text-muted-foreground">
-                    {authMode === "sign-in"
-                      ? "No account yet?"
-                      : "Already have an account?"}
-                    <button
-                      type="button"
-                      className="ml-2 text-foreground underline underline-offset-4"
-                      onClick={() =>
-                        setAuthMode((current) =>
-                          current === "sign-in" ? "sign-up" : "sign-in"
-                        )
-                      }
-                    >
-                      {authMode === "sign-in" ? "Create one" : "Log in"}
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setShowAuthForm(false)}
-                    >
-                      Close
-                    </Button>
-                    <Button type="submit" disabled={isAuthPending}>
-                      {isAuthPending ? (
-                        <LoaderCircle className="size-4 animate-spin" />
-                      ) : authMode === "sign-in" ? (
-                        <LogIn className="size-4" />
-                      ) : (
-                        <UserPlus className="size-4" />
-                      )}
-                      {authMode === "sign-in" ? "Log in" : "Create account"}
-                    </Button>
-                  </div>
-                </div>
-              </form>
-
-              {authError ? (
-                <p className="text-sm text-destructive">{authError}</p>
-              ) : null}
-            </div>
-          </section>
+          <AuthForm
+            mode={authMode}
+            onModeChange={setAuthMode}
+            onClose={() => setShowAuthForm(false)}
+            onAuthenticated={handleAuthenticated}
+          />
         ) : null}
 
-        <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] overflow-hidden">
+        <PdfDropzone
+          onFile={(file) => void handleUpload(file)}
+          onInvalid={(message) => chat.appendAssistant(message)}
+          disabled={uploadDisabled}
+          isUploading={isPreparing}
+          progress={uploadProgress}
+          className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] overflow-hidden"
+        >
           <div
             ref={messagesViewportRef}
             onScroll={handleMessagesScroll}
             className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
           >
-            {!document && !isWorkspaceLoading ? (
+            {!document &&
+            !workspace.isWorkspaceLoading &&
+            chat.messages.every((message) => message.id === "welcome") ? (
               <div className="flex min-h-full items-center justify-center">
                 <div className="flex max-w-xl flex-col items-center justify-center gap-5 rounded-[1.5rem] border border-dashed border-border bg-background px-6 py-12 text-center">
                   <div className="space-y-2">
@@ -777,14 +371,15 @@ export default function PdfChatShell() {
                     </p>
                     <p className="max-w-md text-sm leading-6 text-muted-foreground">
                       Guest mode gives one document and three questions. Log in if
-                      you want to keep going after that.
+                      you want to keep going after that. You can also drag a PDF
+                      anywhere on this panel.
                     </p>
                   </div>
                   <Button
                     size="lg"
                     className="h-11 rounded-xl px-5"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isPreparing || (!uploadAllowed && !isAuthenticated)}
+                    disabled={uploadDisabled}
                   >
                     {isPreparing ? (
                       <LoaderCircle className="size-4 animate-spin" />
@@ -803,8 +398,12 @@ export default function PdfChatShell() {
               </div>
             ) : (
               <div className="flex min-h-full flex-col gap-4 pb-2">
-                {messages.map((message) => (
-                  <ChatMessage key={message.id} message={message} />
+                {chat.messages.map((message) => (
+                  <ChatMessage
+                    key={message.id}
+                    message={message}
+                    onRetry={(retryPrompt) => void chat.handleSend(retryPrompt)}
+                  />
                 ))}
               </div>
             )}
@@ -817,7 +416,7 @@ export default function PdfChatShell() {
                   type="button"
                   className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 transition-colors hover:border-foreground/15 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isPreparing || (!uploadAllowed && !isAuthenticated)}
+                  disabled={uploadDisabled}
                 >
                   {isPreparing ? (
                     <LoaderCircle className="size-3.5 animate-spin" />
@@ -839,7 +438,7 @@ export default function PdfChatShell() {
                 </span>
               ) : (
                 <span className="text-xs text-muted-foreground">
-                  Logged in as {workspace?.viewer.email ?? "user"}
+                  Logged in as {workspace.workspace?.viewer.email ?? "user"}
                 </span>
               )}
             </div>
@@ -851,7 +450,7 @@ export default function PdfChatShell() {
                     key={item}
                     type="button"
                     className="rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/15 hover:text-foreground"
-                    onClick={() => setPrompt(item)}
+                    onClick={() => chat.setPrompt(item)}
                   >
                     {item}
                   </button>
@@ -861,8 +460,8 @@ export default function PdfChatShell() {
 
             <div className="rounded-[1.5rem] border border-border bg-background p-3">
               <Textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
+                value={chat.prompt}
+                onChange={(event) => chat.setPrompt(event.target.value)}
                 placeholder={
                   documentReady
                     ? "Ask about the PDF..."
@@ -870,7 +469,9 @@ export default function PdfChatShell() {
                       ? "Wait until indexing finishes"
                       : "Upload a PDF to enable chat"
                 }
-                disabled={!documentReady || isSending || (limitReached && !isAuthenticated)}
+                disabled={
+                  !documentReady || chat.isSending || (limitReached && !isAuthenticated)
+                }
                 className="min-h-24 max-h-48 resize-y border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
               />
               <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
@@ -878,7 +479,7 @@ export default function PdfChatShell() {
                   {limitReached && !isAuthenticated
                     ? "Guest limit reached. Log in to continue with this document."
                     : documentReady
-                      ? isSending
+                      ? chat.isSending
                         ? "Waiting for the response."
                         : "Document is ready."
                       : document
@@ -888,11 +489,11 @@ export default function PdfChatShell() {
                 <Button
                   size="icon-lg"
                   className="rounded-xl"
-                  onClick={isSending ? handleStop : handleSend}
-                  disabled={!isSending && !canSend}
-                  aria-label={isSending ? "Stop generating" : "Send message"}
+                  onClick={chat.isSending ? chat.handleStop : () => void chat.handleSend()}
+                  disabled={!chat.isSending && !canSend}
+                  aria-label={chat.isSending ? "Stop generating" : "Send message"}
                 >
-                  {isSending ? (
+                  {chat.isSending ? (
                     <Square className="size-4" />
                   ) : (
                     <ArrowUp className="size-4" />
@@ -901,7 +502,7 @@ export default function PdfChatShell() {
               </div>
             </div>
           </div>
-        </section>
+        </PdfDropzone>
       </div>
     </main>
   );
