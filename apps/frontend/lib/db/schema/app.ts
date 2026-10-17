@@ -24,6 +24,7 @@ export const usageSubjects = pgTable(
     ownerType: ownerTypeEnum("owner_type").notNull(),
     ownerId: text("owner_id").notNull(),
     fingerprintHash: text("fingerprint_hash"),
+    activeDocumentId: text("active_document_id"),
     uploadCount: integer("upload_count").notNull().default(0),
     chatCount: integer("chat_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })

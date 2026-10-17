@@ -27,6 +27,7 @@ export type WorkspaceState = {
     limitReached: boolean;
   };
   activeDocument: DocumentSummary | null;
+  documents: DocumentSummary[];
 };
 
 export type UploadDocumentResponse = {

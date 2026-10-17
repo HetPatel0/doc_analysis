@@ -1,0 +1,1 @@
+ALTER TABLE "usage_subject" ADD COLUMN "active_document_id" text;

@@ -24,6 +24,7 @@ import { AuthForm, type AuthMode } from "@/components/auth-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChatMessage } from "@/components/chat-message";
+import { DocSidebar } from "@/components/doc-sidebar";
 import { PdfDropzone } from "@/components/pdf-dropzone";
 import { Textarea } from "@/components/ui/textarea";
 import { useChat } from "@/hooks/use-chat";
@@ -51,6 +52,9 @@ export default function PdfChatShell() {
   const [showAuthForm, setShowAuthForm] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(
+    null
+  );
 
   function scrollMessagesToBottom() {
     const viewport = messagesViewportRef.current;
@@ -73,6 +77,7 @@ export default function PdfChatShell() {
   });
 
   const document = workspace.document;
+  const documents = workspace.workspace?.documents ?? [];
   const isAuthenticated = workspace.workspace?.viewer.isAuthenticated ?? false;
   const remainingChats = workspace.workspace?.limits.remainingChats ?? null;
   const limitReached = workspace.workspace?.limits.limitReached ?? false;
@@ -204,17 +209,35 @@ export default function PdfChatShell() {
     await loadWorkspace();
   }
 
-  async function handleDelete() {
-    if (!document?.documentId || workspace.isDeleting) {
+  async function handleDelete(documentId: string) {
+    if (workspace.isDeleting) {
       return;
     }
 
+    setDeletingDocumentId(documentId);
+
     try {
-      await workspace.deleteDocument(document.documentId);
+      await workspace.deleteDocument(documentId);
       await loadWorkspace();
     } catch (error) {
       chat.appendAssistant(
         toErrorMessage(error, "Could not delete the document.")
+      );
+    } finally {
+      setDeletingDocumentId(null);
+    }
+  }
+
+  async function handleSelectDocument(documentId: string) {
+    if (documentId === document?.documentId) {
+      return;
+    }
+
+    try {
+      await workspace.selectDocument(documentId);
+    } catch (error) {
+      chat.appendAssistant(
+        toErrorMessage(error, "Could not switch documents.")
       );
     }
   }
@@ -232,16 +255,30 @@ export default function PdfChatShell() {
 
   return (
     <main className="h-[100dvh] overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
-      <div className="mx-auto flex h-full max-w-5xl flex-col overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-lg">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/pdf"
-          className="hidden"
-          onChange={handleFileChange}
-        />
+      <div className="mx-auto flex h-full max-w-6xl overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-lg">
+        <div className="hidden h-full md:block">
+          <DocSidebar
+            documents={documents}
+            activeDocumentId={document?.documentId ?? null}
+            deletingDocumentId={deletingDocumentId}
+            uploadDisabled={uploadDisabled}
+            isUploading={isPreparing}
+            onSelect={(documentId) => void handleSelectDocument(documentId)}
+            onDelete={(documentId) => void handleDelete(documentId)}
+            onUpload={() => fileInputRef.current?.click()}
+          />
+        </div>
 
-        <header className="border-b border-border px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+
+          <header className="border-b border-border px-4 py-3 sm:px-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1.5">
               <div className="flex items-center gap-3">
@@ -253,10 +290,26 @@ export default function PdfChatShell() {
                     Bookify
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    Chat with one PDF at a time.
+                    Chat with your documents.
                   </p>
                 </div>
               </div>
+              {documents.length > 1 ? (
+                <select
+                  value={document?.documentId ?? ""}
+                  onChange={(event) =>
+                    void handleSelectDocument(event.target.value)
+                  }
+                  aria-label="Switch document"
+                  className="block w-full max-w-xs rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground md:hidden"
+                >
+                  {documents.map((doc) => (
+                    <option key={doc.documentId} value={doc.documentId}>
+                      {doc.fileName}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
               {document ? (
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <Badge variant="outline" className="rounded-full px-2.5 py-1">
@@ -268,11 +321,11 @@ export default function PdfChatShell() {
                   ) : null}
                   <button
                     type="button"
-                    onClick={handleDelete}
+                    onClick={() => void handleDelete(document.documentId)}
                     disabled={workspace.isDeleting || isPreparing}
                     className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 transition-colors hover:border-destructive/50 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {workspace.isDeleting ? (
+                    {deletingDocumentId === document.documentId ? (
                       <LoaderCircle className="size-3 animate-spin" />
                     ) : (
                       <Trash2 className="size-3" />
@@ -503,6 +556,7 @@ export default function PdfChatShell() {
             </div>
           </div>
         </PdfDropzone>
+        </div>
       </div>
     </main>
   );

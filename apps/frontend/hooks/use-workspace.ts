@@ -58,6 +58,29 @@ export function useWorkspace() {
     }
   }, []);
 
+  const selectDocument = useCallback(async (documentId: string) => {
+    try {
+      const response = await fetch("/api/workspace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId }),
+      });
+      const result =
+        ((await response.json()) as WorkspaceState & ErrorResponse) ?? {};
+
+      if (!response.ok) {
+        throw new Error(result.detail ?? "Could not switch documents.");
+      }
+
+      setWorkspace(result);
+      setDocument(result.activeDocument);
+      return result;
+    } catch (error) {
+      reportError(error, { scope: "useWorkspace.selectDocument" });
+      throw error;
+    }
+  }, []);
+
   return {
     workspace,
     document,
@@ -66,5 +89,6 @@ export function useWorkspace() {
     isDeleting,
     refresh,
     deleteDocument,
+    selectDocument,
   };
 }

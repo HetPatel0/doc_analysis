@@ -35,6 +35,7 @@ export type ActorContext = {
   session: SessionData;
   usage: UsageRow | null;
   activeDocument: DocumentRow | null;
+  documents: DocumentRow[];
   guestCookie: string | null;
   shouldSetGuestCookie: boolean;
 };
@@ -118,6 +119,56 @@ async function findLatestDocument(
   return document ?? null;
 }
 
+async function findDocumentById(
+  ownerType: "guest" | "user",
+  ownerId: string,
+  documentId: string
+): Promise<DocumentRow | null> {
+  const [document] = await db
+    .select()
+    .from(documents)
+    .where(
+      and(
+        eq(documents.ownerType, ownerType),
+        eq(documents.ownerId, ownerId),
+        eq(documents.documentId, documentId)
+      )
+    )
+    .limit(1);
+
+  return document ?? null;
+}
+
+async function listDocuments(
+  ownerType: "guest" | "user",
+  ownerId: string
+): Promise<DocumentRow[]> {
+  return db
+    .select()
+    .from(documents)
+    .where(and(eq(documents.ownerType, ownerType), eq(documents.ownerId, ownerId)))
+    .orderBy(desc(documents.createdAt));
+}
+
+async function resolveActiveDocument(
+  ownerType: "guest" | "user",
+  ownerId: string,
+  usage: UsageRow | null
+): Promise<DocumentRow | null> {
+  if (usage?.activeDocumentId) {
+    const selected = await findDocumentById(
+      ownerType,
+      ownerId,
+      usage.activeDocumentId
+    );
+    if (selected) {
+      return selected;
+    }
+  }
+
+  return findLatestDocument(ownerType, ownerId);
+}
+
 async function findUsage(
   ownerType: "guest" | "user",
   ownerId: string
@@ -193,6 +244,9 @@ async function claimGuestResources(guestId: string, userId: string) {
       .set({
         uploadCount: sql`${usageSubjects.uploadCount} + ${guestUsage.uploadCount}`,
         chatCount: sql`${usageSubjects.chatCount} + ${guestUsage.chatCount}`,
+        ...(guestUsage.activeDocumentId
+          ? { activeDocumentId: guestUsage.activeDocumentId }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(usageSubjects.id, userUsage.id));
@@ -202,6 +256,7 @@ async function claimGuestResources(guestId: string, userId: string) {
       ownerId: userId,
       uploadCount: guestUsage.uploadCount,
       chatCount: guestUsage.chatCount,
+      activeDocumentId: guestUsage.activeDocumentId,
     });
   }
 
@@ -227,7 +282,12 @@ export async function resolveActor(request: Request): Promise<ActorContext> {
     }
 
     const usage = await ensureUsage("user", session.user.id);
-    const activeDocument = await findLatestDocument("user", session.user.id);
+    const activeDocument = await resolveActiveDocument(
+      "user",
+      session.user.id,
+      usage
+    );
+    const documentList = await listDocuments("user", session.user.id);
 
     return {
       type: "user",
@@ -235,6 +295,7 @@ export async function resolveActor(request: Request): Promise<ActorContext> {
       session,
       usage,
       activeDocument,
+      documents: documentList,
       guestCookie,
       shouldSetGuestCookie: false,
     };
@@ -258,7 +319,12 @@ export async function resolveActor(request: Request): Promise<ActorContext> {
   }
 
   const usage = await ensureUsage("guest", resolvedGuestId, fingerprintHash);
-  const activeDocument = await findLatestDocument("guest", resolvedGuestId);
+  const activeDocument = await resolveActiveDocument(
+    "guest",
+    resolvedGuestId,
+    usage
+  );
+  const documentList = await listDocuments("guest", resolvedGuestId);
 
   return {
     type: "guest",
@@ -266,6 +332,7 @@ export async function resolveActor(request: Request): Promise<ActorContext> {
     session: null,
     usage,
     activeDocument,
+    documents: documentList,
     guestCookie: resolvedGuestId,
     shouldSetGuestCookie: guestCookie !== resolvedGuestId,
   };
@@ -330,6 +397,9 @@ export function buildWorkspaceState(actor: ActorContext): WorkspaceState {
       limitReached: actor.type === "guest" ? chatCount >= GUEST_CHAT_LIMIT : false,
     },
     activeDocument: toDocumentSummary(actor.activeDocument),
+    documents: actor.documents
+      .map((document) => toDocumentSummary(document))
+      .filter((document): document is DocumentSummary => document !== null),
   };
 }
 
@@ -354,6 +424,30 @@ export async function assertDocumentOwnership(
   }
 
   return document;
+}
+
+export async function selectActiveDocumentForActor(
+  actor: ActorContext,
+  documentId: string
+): Promise<WorkspaceState> {
+  const document = await assertDocumentOwnership(actor, documentId);
+
+  const [usage] = await db
+    .update(usageSubjects)
+    .set({ activeDocumentId: documentId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(usageSubjects.ownerType, actor.type),
+        eq(usageSubjects.ownerId, actor.ownerId)
+      )
+    )
+    .returning();
+
+  return buildWorkspaceState({
+    ...actor,
+    usage: usage ?? actor.usage,
+    activeDocument: document,
+  });
 }
 
 export async function uploadDocumentForActor(
@@ -393,6 +487,7 @@ export async function uploadDocumentForActor(
     .update(usageSubjects)
     .set({
       uploadCount: sql`${usageSubjects.uploadCount} + 1`,
+      activeDocumentId: document.documentId,
       updatedAt: new Date(),
     })
     .where(
@@ -426,6 +521,18 @@ export async function deleteDocumentForActor(
 
   await db.delete(messages).where(eq(messages.documentId, documentId));
   await db.delete(documents).where(eq(documents.documentId, documentId));
+
+  if (actor.usage?.activeDocumentId === documentId) {
+    await db
+      .update(usageSubjects)
+      .set({ activeDocumentId: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(usageSubjects.ownerType, actor.type),
+          eq(usageSubjects.ownerId, actor.ownerId)
+        )
+      );
+  }
 }
 
 const MAX_MESSAGE_CHARS = 20000;
