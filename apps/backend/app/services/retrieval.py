@@ -41,6 +41,32 @@ def format_context(docs: list[Any]) -> tuple[str, list[str]]:
     return "\n\n".join(context_blocks), sources
 
 
+def build_citations(docs: list[Any]) -> list[dict[str, Any]]:
+    """Structured citation metadata for clickable page references."""
+    citations: list[dict[str, Any]] = []
+    seen: set[tuple[str, int | None]] = set()
+
+    for doc in docs:
+        page_number = doc.metadata.get("page_number") or normalize_page_number(
+            doc.metadata
+        )
+        chunk_index = doc.metadata.get("chunk_index")
+        label = source_label(doc.metadata)
+        key = (label, page_number)
+        if key in seen:
+            continue
+        seen.add(key)
+        citations.append(
+            {
+                "label": label,
+                "page": page_number,
+                "chunk": chunk_index + 1 if isinstance(chunk_index, int) else None,
+            }
+        )
+
+    return citations
+
+
 def format_history(history: list[dict[str, str]]) -> str:
     lines: list[str] = []
 

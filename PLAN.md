@@ -2,6 +2,8 @@
 
 > Ordered by impact / risk. Do Phase 0-1 first, Phase 2-3 next, Phase 4 later.
 > Stack: `apps/frontend` (Next.js 16 + Better-Auth + Drizzle + Neon) + `apps/backend` (FastAPI + LangChain + Chroma + Mistral).
+>
+> Status: Phases 0, 1, and 2 are implemented. Phase 3 is next.
 
 ## Current pain points (why this order)
 
@@ -41,7 +43,7 @@ Biggest perceived quality jump for least effort.
 
 Exit criteria: token streaming, refresh-safe history, markdown with citations.
 
-## Phase 2 — Multi-doc workspace (THIRD, ~1-2 weeks)
+## Phase 2 — Multi-doc workspace (THIRD, ~1-2 weeks) — done
 
 Removes the "one PDF at a time" ceiling.
 

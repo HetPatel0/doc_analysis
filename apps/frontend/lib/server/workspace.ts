@@ -46,6 +46,10 @@ type BackendStatusResponse = {
   status: "queued" | "indexing" | "ready" | "failed";
   chunks_indexed?: number | null;
   error?: string | null;
+  summary?: string | null;
+  key_points?: string[];
+  action_items?: string[];
+  quiz?: Array<{ question: string; answer: string }>;
   detail?: string;
 };
 
@@ -704,7 +708,54 @@ export async function syncDocumentStatus(
     .where(eq(documents.documentId, documentId))
     .returning();
 
-  return toDocumentSummary(updated)!;
+  return {
+    ...toDocumentSummary(updated)!,
+    summary: result.summary ?? null,
+    keyPoints: result.key_points ?? [],
+    actionItems: result.action_items ?? [],
+    quiz: result.quiz ?? [],
+  };
+}
+
+export type DocumentFile = {
+  body: ReadableStream<Uint8Array>;
+  contentLength: string | null;
+};
+
+export async function getDocumentFileForActor(
+  actor: ActorContext,
+  documentId: string
+): Promise<DocumentFile> {
+  await assertDocumentOwnership(actor, documentId);
+
+  const headers = new Headers();
+  if (BACKEND_API_SECRET) {
+    headers.set("X-Bookify-Secret", BACKEND_API_SECRET);
+  }
+
+  let backendResponse: Response;
+  try {
+    backendResponse = await fetch(
+      `${BACKEND_API_URL}/documents/${documentId}/file`,
+      { headers, cache: "no-store" }
+    );
+  } catch {
+    throw new Error(
+      `Could not reach the PDF backend. The backend service is unreachable at ${BACKEND_API_URL}.`
+    );
+  }
+
+  if (!backendResponse.ok || !backendResponse.body) {
+    const result = (await backendResponse.json().catch(() => null)) as {
+      detail?: string;
+    } | null;
+    throw new Error(result?.detail ?? "Could not load the document file.");
+  }
+
+  return {
+    body: backendResponse.body,
+    contentLength: backendResponse.headers.get("content-length"),
+  };
 }
 
 export async function chatWithDocumentForActor(

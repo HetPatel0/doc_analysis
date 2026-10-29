@@ -7,6 +7,17 @@ export type ViewerState = {
   email: string | null;
 };
 
+export type Citation = {
+  label: string;
+  page: number | null;
+  chunk?: number | null;
+};
+
+export type QuizQuestion = {
+  question: string;
+  answer: string;
+};
+
 export type DocumentSummary = {
   documentId: string;
   fileName: string;
@@ -14,6 +25,10 @@ export type DocumentSummary = {
   chunksIndexed: number | null;
   chatsUsed: number;
   createdAt: string;
+  summary?: string | null;
+  keyPoints?: string[];
+  actionItems?: string[];
+  quiz?: QuizQuestion[];
 };
 
 export type WorkspaceState = {

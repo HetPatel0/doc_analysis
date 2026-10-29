@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Message } from "@/components/chat-message";
+import { citationsFromSources } from "@/lib/citations";
 import { reportError, toErrorMessage } from "@/lib/errors";
-import type { DocumentSummary } from "@/lib/workspace-types";
+import type { Citation, DocumentSummary } from "@/lib/workspace-types";
 
 type ErrorResponse = { detail?: string };
 
@@ -230,7 +231,20 @@ export function useChat({
           buffer = remainder;
 
           for (const { event, data } of parsed) {
-            if (event === "token" && data) {
+            if (event === "sources") {
+              const payload = JSON.parse(data) as {
+                sources?: string[];
+                citations?: Citation[];
+              };
+              const citations = payload.citations?.length
+                ? payload.citations
+                : citationsFromSources(payload.sources ?? []);
+              setMessages((current) =>
+                current.map((item) =>
+                  item.id === assistantId ? { ...item, citations } : item
+                )
+              );
+            } else if (event === "token" && data) {
               const { token } = JSON.parse(data) as { token: string };
               streamedChars += token.length;
               streamedAnswer += token;

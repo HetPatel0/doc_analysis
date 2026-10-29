@@ -11,7 +11,7 @@ from app import dependencies as deps
 from app.config import settings
 from app.observability import capture_exception
 from app.schemas import DocumentStatusResponse
-from app.services import retrieval
+from app.services import insights, retrieval
 
 
 def get_vectorstore_path(document_id: str) -> Path:
@@ -37,6 +37,10 @@ def write_document_status(
     status: str,
     chunks_indexed: int | None = None,
     error: str | None = None,
+    summary: str | None = None,
+    key_points: list[str] | None = None,
+    action_items: list[str] | None = None,
+    quiz: list[dict[str, str]] | None = None,
 ) -> None:
     get_document_status_path(document_id).write_text(
         json.dumps(
@@ -46,10 +50,21 @@ def write_document_status(
                 "status": status,
                 "chunks_indexed": chunks_indexed,
                 "error": error,
+                "summary": summary,
+                "key_points": key_points or [],
+                "action_items": action_items or [],
+                "quiz": quiz or [],
             }
         ),
         encoding="utf-8",
     )
+
+
+def find_uploaded_file(document_id: str) -> Path | None:
+    for upload_path in settings.uploads_dir.glob(f"{document_id}-*"):
+        if upload_path.is_file():
+            return upload_path
+    return None
 
 
 def read_document_status(document_id: str) -> DocumentStatusResponse:
@@ -136,11 +151,14 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
             persist_directory=str(get_vectorstore_path(document_id)),
         )
 
+        document_insights = insights.generate_insights(chunks)
+
         write_document_status(
             document_id,
             file_name=file_name,
             status="ready",
             chunks_indexed=len(chunks),
+            **document_insights,
         )
     except Exception as exc:
         capture_exception(exc)

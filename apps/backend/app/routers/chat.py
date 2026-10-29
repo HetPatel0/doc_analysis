@@ -24,20 +24,21 @@ def sse_event(event: str, payload: dict[str, Any]) -> str:
     "/chat", response_model=ChatResponse, dependencies=[Depends(require_backend_auth)]
 )
 def chat_with_document(request: ChatRequest) -> ChatResponse:
-    final_prompt, sources = chat_service.prepare_chat(request)
+    final_prompt, sources, citations = chat_service.prepare_chat(request)
     response = deps.get_llm().invoke(final_prompt)
     return ChatResponse(
         answer=retrieval.with_source_footer(response.content, sources),
         sources=sources,
+        citations=citations,
     )
 
 
 @router.post("/chat/stream", dependencies=[Depends(require_backend_auth)])
 def chat_stream_with_document(request: ChatRequest) -> StreamingResponse:
-    final_prompt, sources = chat_service.prepare_chat(request)
+    final_prompt, sources, citations = chat_service.prepare_chat(request)
 
     def generate() -> Any:
-        yield sse_event("sources", {"sources": sources})
+        yield sse_event("sources", {"sources": sources, "citations": citations})
         streamed: list[str] = []
         try:
             for chunk in deps.get_llm().stream(final_prompt):

@@ -8,7 +8,9 @@ from app.schemas import ChatRequest
 from app.services import documents, retrieval
 
 
-def prepare_chat(request: ChatRequest) -> tuple[Any, list[str]]:
+def prepare_chat(
+    request: ChatRequest,
+) -> tuple[Any, list[str], list[dict[str, Any]]]:
     """Run retrieval and build the final prompt (shared by /chat + /chat/stream)."""
     from langchain_community.vectorstores import Chroma
 
@@ -34,6 +36,7 @@ def prepare_chat(request: ChatRequest) -> tuple[Any, list[str]]:
         retrieved_docs, retrieval_query, settings.retrieval_top_k
     )
     context, sources = retrieval.format_context(docs)
+    citations = retrieval.build_citations(docs)
 
     final_prompt = deps.get_prompt().invoke(
         {
@@ -42,4 +45,4 @@ def prepare_chat(request: ChatRequest) -> tuple[Any, list[str]]:
             "question": request.message,
         }
     )
-    return final_prompt, sources
+    return final_prompt, sources, citations

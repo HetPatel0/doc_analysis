@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.schemas import DocumentStatusResponse
@@ -10,6 +11,25 @@ from app.security import require_backend_auth
 from app.services import documents
 
 router = APIRouter(tags=["documents"])
+
+
+@router.get(
+    "/documents/{document_id}/file", dependencies=[Depends(require_backend_auth)]
+)
+def get_document_file(document_id: str) -> FileResponse:
+    status = documents.read_document_status(document_id)
+    upload_path = documents.find_uploaded_file(document_id)
+    if upload_path is None:
+        raise HTTPException(status_code=404, detail="Document file not found.")
+
+    return FileResponse(
+        upload_path,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{status.file_name}"',
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 @router.get(

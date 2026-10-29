@@ -18,6 +18,7 @@ import {
 import { authClient } from "@/lib/auth-client";
 import { toErrorMessage } from "@/lib/errors";
 import { uploadPdfWithProgress, validatePdfFile } from "@/lib/upload";
+import { cn } from "@/lib/utils";
 import { GUEST_CHAT_LIMIT, type DocumentSummary } from "@/lib/workspace-types";
 
 import { AuthForm, type AuthMode } from "@/components/auth-form";
@@ -25,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChatMessage } from "@/components/chat-message";
 import { DocSidebar } from "@/components/doc-sidebar";
+import { DocumentPanel } from "@/components/document-panel";
 import { PdfDropzone } from "@/components/pdf-dropzone";
 import { Textarea } from "@/components/ui/textarea";
 import { useChat } from "@/hooks/use-chat";
@@ -44,6 +46,7 @@ export default function PdfChatShell() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
+  const detailsFetchedRef = useRef<string | null>(null);
 
   const { theme, toggleTheme } = useTheme();
   const workspace = useWorkspace();
@@ -55,6 +58,11 @@ export default function PdfChatShell() {
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(
     null
   );
+  const [viewer, setViewer] = useState<{
+    documentId: string | null;
+    page: number;
+  }>({ documentId: null, page: 1 });
+  const [mobileTab, setMobileTab] = useState<"chat" | "document">("chat");
 
   function scrollMessagesToBottom() {
     const viewport = messagesViewportRef.current;
@@ -113,6 +121,57 @@ export default function PdfChatShell() {
       setShowAuthForm(true);
     }
   }, [isAuthenticated, limitReached]);
+
+  const activeDocumentId = document?.documentId ?? null;
+  const viewerPage =
+    viewer.documentId === activeDocumentId ? viewer.page : 1;
+
+  useEffect(() => {
+    if (!activeDocumentId || document?.status !== "ready") {
+      return;
+    }
+    if (detailsFetchedRef.current === activeDocumentId) {
+      return;
+    }
+    detailsFetchedRef.current = activeDocumentId;
+
+    let cancelled = false;
+
+    async function loadDocumentDetails() {
+      try {
+        const response = await fetch(`/api/documents/${activeDocumentId}`, {
+          cache: "no-store",
+        });
+        const result =
+          ((await response.json()) as DocumentSummary & ErrorResponse) ?? {};
+
+        if (!cancelled && response.ok && result.documentId) {
+          workspace.setDocument(result);
+        } else if (!cancelled) {
+          detailsFetchedRef.current = null;
+        }
+      } catch {
+        // Insights are optional; keep the chat usable if this fails.
+        if (!cancelled) {
+          detailsFetchedRef.current = null;
+        }
+      }
+    }
+
+    void loadDocumentDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDocumentId, document?.status, workspace]);
+
+  function setViewerPage(page: number) {
+    setViewer({ documentId: activeDocumentId, page });
+  }
+
+  function handleCitationClick(page: number) {
+    setViewerPage(page);
+    setMobileTab("document");
+  }
 
   function handleMessagesScroll() {
     const viewport = messagesViewportRef.current;
@@ -255,7 +314,7 @@ export default function PdfChatShell() {
 
   return (
     <main className="h-[100dvh] overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
-      <div className="mx-auto flex h-full max-w-6xl overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-lg">
+      <div className="mx-auto flex h-full max-w-7xl overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-lg">
         <div className="hidden h-full md:block">
           <DocSidebar
             documents={documents}
@@ -302,7 +361,7 @@ export default function PdfChatShell() {
                   }
                   aria-label="Switch document"
                   className="block w-full max-w-xs rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground md:hidden"
-                >
+            >
                   {documents.map((doc) => (
                     <option key={doc.documentId} value={doc.documentId}>
                       {doc.fileName}
@@ -400,162 +459,205 @@ export default function PdfChatShell() {
           />
         ) : null}
 
-        <PdfDropzone
-          onFile={(file) => void handleUpload(file)}
-          onInvalid={(message) => chat.appendAssistant(message)}
-          disabled={uploadDisabled}
-          isUploading={isPreparing}
-          progress={uploadProgress}
-          className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] overflow-hidden"
-        >
-          <div
-            ref={messagesViewportRef}
-            onScroll={handleMessagesScroll}
-            className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
-          >
-            {!document &&
-            !workspace.isWorkspaceLoading &&
-            chat.messages.every((message) => message.id === "welcome") ? (
-              <div className="flex min-h-full items-center justify-center">
-                <div className="flex max-w-xl flex-col items-center justify-center gap-5 rounded-[1.5rem] border border-dashed border-border bg-background px-6 py-12 text-center">
-                  <div className="space-y-2">
-                    <p className="text-lg font-medium text-foreground">
-                      Upload a PDF to start
-                    </p>
-                    <p className="max-w-md text-sm leading-6 text-muted-foreground">
-                      Guest mode gives one document and three questions. Log in if
-                      you want to keep going after that. You can also drag a PDF
-                      anywhere on this panel.
-                    </p>
-                  </div>
-                  <Button
-                    size="lg"
-                    className="h-11 rounded-xl px-5"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploadDisabled}
-                  >
-                    {isPreparing ? (
-                      <LoaderCircle className="size-4 animate-spin" />
-                    ) : (
-                      <FileText className="size-4" />
-                    )}
-                    Choose PDF
-                  </Button>
-
-                  {!uploadAllowed && !isAuthenticated ? (
-                    <p className="text-sm text-muted-foreground">
-                      Guest upload already used. Log in to upload another file.
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-            ) : (
-              <div className="flex min-h-full flex-col gap-4 pb-2">
-                {chat.messages.map((message) => (
-                  <ChatMessage
-                    key={message.id}
-                    message={message}
-                    onRetry={(retryPrompt) => void chat.handleSend(retryPrompt)}
-                  />
-                ))}
-              </div>
-            )}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
+          <div className="flex items-center gap-1 border-b border-border p-2 md:hidden">
+            {(["chat", "document"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setMobileTab(tab)}
+                aria-pressed={mobileTab === tab}
+                className={cn(
+                  "flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                  mobileTab === tab
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {tab === "chat" ? "Chat" : "Document"}
+              </button>
+            ))}
           </div>
 
-          <div className="border-t border-border bg-card px-4 py-3 sm:px-5">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 transition-colors hover:border-foreground/15 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadDisabled}
-                >
-                  {isPreparing ? (
-                    <LoaderCircle className="size-3.5 animate-spin" />
-                  ) : (
-                    <Paperclip className="size-3.5" />
-                  )}
-                  {document ? "Replace PDF" : "Upload PDF"}
-                </button>
-                {document ? (
-                  <span>{document.fileName}</span>
+          <section
+            className={cn(
+              "min-h-0 flex-1 border-border md:flex md:max-w-[56%] md:border-r",
+              mobileTab === "document" ? "flex" : "hidden"
+            )}
+          >
+            <DocumentPanel
+              key={document?.documentId ?? "none"}
+              document={document}
+              page={viewerPage}
+              onPageChange={setViewerPage}
+            />
+          </section>
+
+          <section
+            className={cn(
+              "min-h-0 flex-1 md:flex",
+              mobileTab === "chat" ? "flex" : "hidden"
+            )}
+          >
+            <PdfDropzone
+              onFile={(file) => void handleUpload(file)}
+              onInvalid={(message) => chat.appendAssistant(message)}
+              disabled={uploadDisabled}
+              isUploading={isPreparing}
+              progress={uploadProgress}
+              className="grid h-full min-h-0 w-full grid-rows-[minmax(0,1fr)_auto] overflow-hidden"
+            >
+              <div
+                ref={messagesViewportRef}
+                onScroll={handleMessagesScroll}
+                className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+              >
+                {!document &&
+                !workspace.isWorkspaceLoading &&
+                chat.messages.every((message) => message.id === "welcome") ? (
+                  <div className="flex min-h-full items-center justify-center">
+                    <div className="flex max-w-xl flex-col items-center justify-center gap-5 rounded-[1.5rem] border border-dashed border-border bg-background px-6 py-12 text-center">
+                      <div className="space-y-2">
+                        <p className="text-lg font-medium text-foreground">
+                          Upload a PDF to start
+                        </p>
+                        <p className="max-w-md text-sm leading-6 text-muted-foreground">
+                          Guest mode gives one document and three questions. Log in if
+                          you want to keep going after that. You can also drag a PDF
+                          anywhere on this panel.
+                        </p>
+                      </div>
+                      <Button
+                        size="lg"
+                        className="h-11 rounded-xl px-5"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadDisabled}
+                      >
+                        {isPreparing ? (
+                          <LoaderCircle className="size-4 animate-spin" />
+                        ) : (
+                          <FileText className="size-4" />
+                        )}
+                        Choose PDF
+                      </Button>
+
+                      {!uploadAllowed && !isAuthenticated ? (
+                        <p className="text-sm text-muted-foreground">
+                          Guest upload already used. Log in to upload another file.
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
                 ) : (
-                  <span>No document loaded</span>
+                  <div className="flex min-h-full flex-col gap-4 pb-2">
+                    {chat.messages.map((message) => (
+                      <ChatMessage
+                        key={message.id}
+                        message={message}
+                        onRetry={(retryPrompt) => void chat.handleSend(retryPrompt)}
+                        onCitationClick={handleCitationClick}
+                      />
+                    ))}
+                  </div>
                 )}
               </div>
 
-              {!isAuthenticated ? (
-                <span className="text-xs text-muted-foreground">
-                  {remainingChats ?? GUEST_CHAT_LIMIT} guest chats remaining
-                </span>
-              ) : (
-                <span className="text-xs text-muted-foreground">
-                  Logged in as {workspace.workspace?.viewer.email ?? "user"}
-                </span>
-              )}
-            </div>
+              <div className="border-t border-border bg-card px-4 py-3 sm:px-5">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 transition-colors hover:border-foreground/15 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadDisabled}
+                    >
+                      {isPreparing ? (
+                        <LoaderCircle className="size-3.5 animate-spin" />
+                      ) : (
+                        <Paperclip className="size-3.5" />
+                      )}
+                      {document ? "Replace PDF" : "Upload PDF"}
+                    </button>
+                    {document ? (
+                      <span>{document.fileName}</span>
+                    ) : (
+                      <span>No document loaded</span>
+                    )}
+                  </div>
 
-            {documentReady ? (
-              <div className="flex flex-wrap gap-2 pb-3">
-                {starterPrompts.map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    className="rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/15 hover:text-foreground"
-                    onClick={() => chat.setPrompt(item)}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="rounded-[1.5rem] border border-border bg-background p-3">
-              <Textarea
-                value={chat.prompt}
-                onChange={(event) => chat.setPrompt(event.target.value)}
-                placeholder={
-                  documentReady
-                    ? "Ask about the PDF..."
-                    : document
-                      ? "Wait until indexing finishes"
-                      : "Upload a PDF to enable chat"
-                }
-                disabled={
-                  !documentReady || chat.isSending || (limitReached && !isAuthenticated)
-                }
-                className="min-h-24 max-h-48 resize-y border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
-              />
-              <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
-                <p className="text-xs text-muted-foreground">
-                  {limitReached && !isAuthenticated
-                    ? "Guest limit reached. Log in to continue with this document."
-                    : documentReady
-                      ? chat.isSending
-                        ? "Waiting for the response."
-                        : "Document is ready."
-                      : document
-                        ? "Document is indexing."
-                        : "No document uploaded yet."}
-                </p>
-                <Button
-                  size="icon-lg"
-                  className="rounded-xl"
-                  onClick={chat.isSending ? chat.handleStop : () => void chat.handleSend()}
-                  disabled={!chat.isSending && !canSend}
-                  aria-label={chat.isSending ? "Stop generating" : "Send message"}
-                >
-                  {chat.isSending ? (
-                    <Square className="size-4" />
+                  {!isAuthenticated ? (
+                    <span className="text-xs text-muted-foreground">
+                      {remainingChats ?? GUEST_CHAT_LIMIT} guest chats remaining
+                    </span>
                   ) : (
-                    <ArrowUp className="size-4" />
+                    <span className="text-xs text-muted-foreground">
+                      Logged in as {workspace.workspace?.viewer.email ?? "user"}
+                    </span>
                   )}
-                </Button>
+                </div>
+
+                {documentReady ? (
+                  <div className="flex flex-wrap gap-2 pb-3">
+                    {starterPrompts.map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        className="rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/15 hover:text-foreground"
+                        onClick={() => chat.setPrompt(item)}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="rounded-[1.5rem] border border-border bg-background p-3">
+                  <Textarea
+                    value={chat.prompt}
+                    onChange={(event) => chat.setPrompt(event.target.value)}
+                    placeholder={
+                      documentReady
+                        ? "Ask about the PDF..."
+                        : document
+                          ? "Wait until indexing finishes"
+                          : "Upload a PDF to enable chat"
+                    }
+                    disabled={
+                      !documentReady || chat.isSending || (limitReached && !isAuthenticated)
+                    }
+                    className="min-h-24 max-h-48 resize-y border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
+                  />
+                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
+                    <p className="text-xs text-muted-foreground">
+                      {limitReached && !isAuthenticated
+                        ? "Guest limit reached. Log in to continue with this document."
+                        : documentReady
+                          ? chat.isSending
+                            ? "Waiting for the response."
+                            : "Document is ready."
+                          : document
+                            ? "Document is indexing."
+                            : "No document uploaded yet."}
+                    </p>
+                    <Button
+                      size="icon-lg"
+                      className="rounded-xl"
+                      onClick={chat.isSending ? chat.handleStop : () => void chat.handleSend()}
+                      disabled={!chat.isSending && !canSend}
+                      aria-label={chat.isSending ? "Stop generating" : "Send message"}
+                    >
+                      {chat.isSending ? (
+                        <Square className="size-4" />
+                      ) : (
+                        <ArrowUp className="size-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        </PdfDropzone>
+            </PdfDropzone>
+          </section>
+        </div>
         </div>
       </div>
     </main>
