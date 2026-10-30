@@ -5,9 +5,7 @@ import { LoaderCircle, LockKeyhole, LogIn, UserPlus, X } from "lucide-react";
 
 import { authClient } from "@/lib/auth-client";
 import { reportError, toErrorMessage } from "@/lib/errors";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
 
 export type AuthMode = "sign-in" | "sign-up";
 
@@ -75,39 +73,39 @@ export function AuthForm({
         type="button"
         aria-label="Close dialog"
         onClick={onClose}
-        className="absolute inset-0 bg-background/60 backdrop-blur-md"
+        className="absolute inset-0 bg-background/55 backdrop-blur-xl"
       />
 
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="auth-title"
-        className="glass-strong relative z-10 w-full max-w-sm rounded-2xl border border-border/70 p-6 shadow-2xl"
+        className="glass-strong relative z-10 w-full max-w-[360px] p-6 shadow-[0_40px_120px_-40px_rgba(0,0,0,0.65)]"
       >
         <button
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="absolute right-3 top-3 inline-flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="absolute right-3 top-3 flex size-7 items-center justify-center text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
         >
-          <X className="size-4" />
+          <X className="size-3.5" />
         </button>
 
         <div className="flex flex-col gap-1.5 pr-8">
-          <div className="mb-2 flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <div className="mb-3 flex size-9 items-center justify-center bg-primary/10 text-primary">
             {mode === "sign-in" ? (
-              <LogIn className="size-5" />
+              <LogIn className="size-4" />
             ) : (
-              <UserPlus className="size-5" />
+              <UserPlus className="size-4" />
             )}
           </div>
           <h2
             id="auth-title"
-            className="text-base font-semibold tracking-tight text-foreground"
+            className="text-[15px] font-semibold tracking-tight text-foreground"
           >
             {mode === "sign-in" ? "Welcome back" : "Create your account"}
           </h2>
-          <p className="text-xs leading-5 text-muted-foreground">
+          <p className="text-[11.5px] leading-5 text-muted-foreground">
             {mode === "sign-in"
               ? "Log in to keep your library and continue chatting."
               : "Guest mode is limited to one PDF and three chats."}
@@ -117,7 +115,7 @@ export function AuthForm({
         <form className="mt-5 flex flex-col gap-3" onSubmit={handleSubmit}>
           {mode === "sign-up" ? (
             <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+              <span className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/70">
                 Full name
               </span>
               <Input
@@ -125,14 +123,13 @@ export function AuthForm({
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Ada Lovelace"
                 autoComplete="name"
-                className="h-10"
                 required
               />
             </label>
           ) : null}
 
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+            <span className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/70">
               Email
             </span>
             <Input
@@ -141,13 +138,12 @@ export function AuthForm({
               placeholder="you@example.com"
               type="email"
               autoComplete="email"
-              className="h-10"
               required
             />
           </label>
 
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+            <span className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/70">
               Password
             </span>
             <Input
@@ -158,34 +154,35 @@ export function AuthForm({
               autoComplete={
                 mode === "sign-in" ? "current-password" : "new-password"
               }
-              className="h-10"
               required
             />
           </label>
 
           {error ? (
-            <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+            <p className="bg-destructive/10 px-3 py-2 text-[11.5px] leading-5 text-destructive">
               {error}
             </p>
           ) : null}
 
-          <Button type="submit" size="lg" className="mt-1 h-10" disabled={isPending}>
+          <button
+            type="submit"
+            disabled={isPending}
+            className="mt-1 inline-flex h-9 items-center justify-center gap-2 bg-primary text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
             {isPending ? (
               <LoaderCircle className="size-4 animate-spin" />
             ) : (
-              <LockKeyhole className="size-4" />
+              <LockKeyhole className="size-3.5" />
             )}
             {mode === "sign-in" ? "Log in" : "Create account"}
-          </Button>
+          </button>
         </form>
 
-        <p className="mt-4 text-center text-xs text-muted-foreground">
+        <p className="mt-4 text-center text-[11px] text-muted-foreground">
           {mode === "sign-in" ? "No account yet?" : "Already have an account?"}
           <button
             type="button"
-            className={cn(
-              "ml-1.5 font-medium text-foreground underline-offset-4 hover:underline"
-            )}
+            className="ml-1.5 font-medium text-foreground underline-offset-4 hover:underline"
             onClick={() =>
               onModeChange(mode === "sign-in" ? "sign-up" : "sign-in")
             }

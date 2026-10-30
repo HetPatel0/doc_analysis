@@ -24,6 +24,7 @@ import { ChatMessage } from "@/components/chat-message";
 import { DocSidebar } from "@/components/doc-sidebar";
 import { DocumentPanel } from "@/components/document-panel";
 import { PdfDropzone } from "@/components/pdf-dropzone";
+import { ScrollArea } from "@/components/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useChat } from "@/hooks/use-chat";
 import { useTheme } from "@/hooks/use-theme";
@@ -32,9 +33,9 @@ import { useWorkspace } from "@/hooks/use-workspace";
 type ErrorResponse = { detail?: string };
 
 const starterPrompts = [
-  "Summarize the PDF in five bullet points.",
-  "List the key action items.",
-  "Explain the main argument in plain English.",
+  "Summarize this PDF",
+  "List the key action items",
+  "Explain the main argument",
 ];
 
 const statusText: Record<DocumentSummary["status"], string> = {
@@ -66,6 +67,12 @@ export default function PdfChatShell() {
     page: number;
   }>({ documentId: null, page: 1 });
   const [mobileTab, setMobileTab] = useState<"chat" | "document">("chat");
+
+  // Warm the PDF chunk during idle startup so opening the first document never
+  // shows a dynamic-import spinner.
+  useEffect(() => {
+    void import("@/components/pdf-viewer");
+  }, []);
 
   function scrollMessagesToBottom() {
     const viewport = messagesViewportRef.current;
@@ -127,8 +134,7 @@ export default function PdfChatShell() {
   }, [isAuthenticated, limitReached]);
 
   const activeDocumentId = document?.documentId ?? null;
-  const viewerPage =
-    viewer.documentId === activeDocumentId ? viewer.page : 1;
+  const viewerPage = viewer.documentId === activeDocumentId ? viewer.page : 1;
   const setDocument = workspace.setDocument;
 
   useEffect(() => {
@@ -322,10 +328,12 @@ export default function PdfChatShell() {
     !document &&
     !workspace.isWorkspaceLoading &&
     chat.messages.every((message) => message.id === "welcome");
+  const showStarters =
+    documentReady && chat.messages.every((message) => message.role !== "user");
 
   const composerHint =
     limitReached && !isAuthenticated
-      ? "Guest limit reached. Log in to continue."
+      ? "Guest limit reached — log in to continue"
       : documentReady
         ? chat.isSending
           ? "Waiting for the response…"
@@ -335,7 +343,7 @@ export default function PdfChatShell() {
           : "Add a PDF to enable chat";
 
   return (
-    <main className="app-canvas flex h-[100dvh] w-full overflow-hidden">
+    <main className="app-canvas relative flex h-[100dvh] w-full overflow-hidden">
       <input
         ref={fileInputRef}
         type="file"
@@ -365,9 +373,9 @@ export default function PdfChatShell() {
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
-        <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 lg:hidden">
+        <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3 xl:hidden">
           <div className="flex min-w-0 items-center gap-2">
-            <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-semibold text-primary-foreground">
+            <div className="flex size-6 shrink-0 items-center justify-center bg-primary font-mono text-[10px] font-semibold text-primary-foreground">
               B
             </div>
             {documents.length > 1 ? (
@@ -377,7 +385,7 @@ export default function PdfChatShell() {
                   void handleSelectDocument(event.target.value)
                 }
                 aria-label="Switch document"
-                className="min-w-0 max-w-[180px] truncate rounded-md border border-border/70 bg-card/70 px-2 py-1 text-xs text-foreground"
+                className="max-w-[170px] truncate bg-foreground/[0.05] px-2 py-1 text-[11px] text-foreground outline-none"
               >
                 {documents.map((doc) => (
                   <option key={doc.documentId} value={doc.documentId}>
@@ -386,7 +394,7 @@ export default function PdfChatShell() {
                 ))}
               </select>
             ) : (
-              <p className="truncate text-sm font-semibold tracking-tight">
+              <p className="truncate text-[13px] font-semibold tracking-tight">
                 Bookify
               </p>
             )}
@@ -397,7 +405,7 @@ export default function PdfChatShell() {
               type="button"
               onClick={toggleTheme}
               aria-label="Toggle theme"
-              className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="flex size-8 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
             >
               {theme === "dark" ? (
                 <Sun className="size-4" />
@@ -410,7 +418,7 @@ export default function PdfChatShell() {
               onClick={() => fileInputRef.current?.click()}
               disabled={uploadDisabled}
               aria-label="Add PDF"
-              className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+              className="flex size-8 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:opacity-40"
             >
               {isPreparing ? (
                 <LoaderCircle className="size-4 animate-spin" />
@@ -422,7 +430,7 @@ export default function PdfChatShell() {
               <button
                 type="button"
                 onClick={() => void handleSignOut()}
-                className="inline-flex h-8 items-center rounded-lg px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="flex h-8 items-center px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
               >
                 Sign out
               </button>
@@ -430,7 +438,7 @@ export default function PdfChatShell() {
               <button
                 type="button"
                 onClick={() => openAuth("sign-in")}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-xs font-medium text-primary-foreground"
+                className="flex h-7 items-center gap-1.5 bg-primary px-2.5 text-[11px] font-medium text-primary-foreground"
               >
                 <LogIn className="size-3.5" />
                 Log in
@@ -440,7 +448,7 @@ export default function PdfChatShell() {
         </div>
 
         {/* Mobile pane switcher */}
-        <div className="flex shrink-0 gap-1 border-b border-border/70 p-2 md:hidden">
+        <div className="flex shrink-0 gap-1 px-2 pb-1 md:hidden">
           {(["document", "chat"] as const).map((tab) => (
             <button
               key={tab}
@@ -448,10 +456,10 @@ export default function PdfChatShell() {
               onClick={() => setMobileTab(tab)}
               aria-pressed={mobileTab === tab}
               className={cn(
-                "flex-1 rounded-lg px-3 py-1.5 text-xs font-medium capitalize transition-colors",
+                "flex h-8 flex-1 items-center justify-center text-[11px] font-medium capitalize transition-colors",
                 mobileTab === tab
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                  ? "bg-foreground/[0.07] text-foreground"
+                  : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground"
               )}
             >
               {tab}
@@ -459,7 +467,7 @@ export default function PdfChatShell() {
           ))}
         </div>
 
-        <div className="flex min-h-0 flex-1 md:flex-row">
+        <div className="flex min-h-0 flex-1">
           <section
             className={cn(
               "min-h-0 min-w-0 flex-1 md:flex",
@@ -467,22 +475,24 @@ export default function PdfChatShell() {
             )}
           >
             <DocumentPanel
-              key={document?.documentId ?? "none"}
               document={document}
+              isLoading={workspace.isWorkspaceLoading}
               page={viewerPage}
               onPageChange={setViewerPage}
               isDeleting={Boolean(
                 document && deletingDocumentId === document.documentId
               )}
               onDelete={
-                document ? () => void handleDelete(document.documentId) : undefined
+                document
+                  ? () => void handleDelete(document.documentId)
+                  : undefined
               }
             />
           </section>
 
           <section
             className={cn(
-              "min-h-0 min-w-0 border-border/70 md:flex md:w-[400px] md:flex-none md:border-l lg:w-[420px] xl:w-[470px]",
+              "min-h-0 min-w-0 bg-card/40 backdrop-blur-2xl md:flex md:w-[352px] md:shrink-0 lg:w-[380px] xl:w-[400px] 2xl:w-[440px]",
               mobileTab === "chat" ? "flex" : "hidden"
             )}
           >
@@ -492,9 +502,9 @@ export default function PdfChatShell() {
               disabled={uploadDisabled}
               isUploading={isPreparing}
               progress={uploadProgress}
-              className="flex h-full min-h-0 w-full flex-col"
+              className="flex h-full min-h-0 w-full min-w-0 flex-col"
             >
-              <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-3.5">
+              <div className="flex h-12 shrink-0 items-center justify-between gap-3 px-4">
                 <div className="flex min-w-0 items-center gap-2">
                   <span
                     aria-hidden
@@ -506,59 +516,61 @@ export default function PdfChatShell() {
                           ? "bg-destructive"
                           : document
                             ? "animate-pulse bg-amber-500"
-                            : "bg-muted-foreground/50"
+                            : "bg-muted-foreground/40"
                     )}
                   />
-                  <p className="shrink-0 text-sm font-medium text-foreground">
+                  <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                     Assistant
-                  </p>
+                  </span>
                   {document ? (
-                    <span className="min-w-0 truncate text-xs text-muted-foreground">
+                    <span
+                      title={document.fileName}
+                      className="min-w-0 truncate text-[11px] text-muted-foreground/60"
+                    >
                       {document.fileName}
                     </span>
                   ) : null}
                 </div>
-                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                  {document ? statusText[document.status] : "No document"}
+                <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
+                  {document ? statusText[document.status] : "Idle"}
                 </span>
               </div>
 
-              <div
-                ref={messagesViewportRef}
+              <ScrollArea
+                viewportRef={messagesViewportRef}
                 onScroll={handleMessagesScroll}
-                className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+                className="flex-1"
               >
                 {isChatEmpty ? (
-                  <div className="flex min-h-full items-center justify-center px-6 py-10">
-                    <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
-                      <div className="flex size-12 items-center justify-center rounded-2xl bg-accent text-accent-foreground">
-                        <FileText className="size-5" />
+                  <div className="flex h-full items-center justify-center px-6 py-10">
+                    <div className="flex w-full max-w-[300px] flex-col gap-4">
+                      <div className="flex size-9 items-center justify-center bg-foreground/[0.05]">
+                        <FileText className="size-4 text-muted-foreground" />
                       </div>
-                      <div className="space-y-1.5">
-                        <p className="text-base font-semibold tracking-tight text-foreground">
-                          Start with a PDF
+                      <div className="flex flex-col gap-1.5">
+                        <p className="text-[15px] font-semibold tracking-tight text-foreground">
+                          Start with a document
                         </p>
-                        <p className="text-[13px] leading-6 text-muted-foreground">
+                        <p className="text-[12px] leading-5 text-muted-foreground">
+                          Drop a PDF anywhere in this panel, or choose a file.
                           Guest mode includes one document and three questions.
-                          Drag a file anywhere in this panel, or choose one
-                          below.
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={uploadDisabled}
-                        className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex h-8 w-fit items-center gap-2 bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {isPreparing ? (
-                          <LoaderCircle className="size-4 animate-spin" />
+                          <LoaderCircle className="size-3.5 animate-spin" />
                         ) : (
-                          <FileText className="size-4" />
+                          <FileText className="size-3.5" />
                         )}
                         Choose PDF
                       </button>
                       {!uploadAllowed && !isAuthenticated ? (
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-[11px] leading-5 text-muted-foreground">
                           Guest upload already used.{" "}
                           <button
                             type="button"
@@ -573,99 +585,115 @@ export default function PdfChatShell() {
                     </div>
                   </div>
                 ) : (
-                  <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-5">
+                  <div className="mx-auto flex w-full max-w-[720px] flex-col gap-7 px-4 py-5">
                     {chat.messages.map((message) => (
                       <ChatMessage
                         key={message.id}
                         message={message}
-                        onRetry={(retryPrompt) => void chat.handleSend(retryPrompt)}
+                        onRetry={(retryPrompt) =>
+                          void chat.handleSend(retryPrompt)
+                        }
                         onCitationClick={handleCitationClick}
                       />
                     ))}
                   </div>
                 )}
-              </div>
+              </ScrollArea>
 
-              <div className="shrink-0 px-3 pb-3 pt-1">
-                {documentReady ? (
-                  <div className="flex flex-wrap gap-1.5 pb-2">
+              <div className="shrink-0 px-3 pb-3">
+                {showStarters ? (
+                  <div className="flex flex-col gap-0.5 pb-2">
                     {starterPrompts.map((item) => (
                       <button
                         key={item}
                         type="button"
-                        className="rounded-full border border-border/70 bg-card/60 px-3 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
                         onClick={() => chat.setPrompt(item)}
+                        className="flex w-fit items-center gap-2 py-0.5 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
                       >
+                        <span aria-hidden className="text-muted-foreground/40">
+                          ›
+                        </span>
                         {item}
                       </button>
                     ))}
                   </div>
                 ) : null}
 
-                <div className="glass rounded-2xl border border-border/70 p-1.5 shadow-sm">
+                <div className="bg-card/70 shadow-[0_1px_0_0_rgba(0,0,0,0.02),0_18px_48px_-32px_rgba(0,0,0,0.5)] backdrop-blur-xl">
                   <Textarea
                     value={chat.prompt}
                     onChange={(event) => chat.setPrompt(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key === "Enter" &&
+                        !event.shiftKey &&
+                        !event.nativeEvent.isComposing
+                      ) {
+                        event.preventDefault();
+                        if (canSend) {
+                          void chat.handleSend();
+                        }
+                      }
+                    }}
                     placeholder={
                       documentReady
-                        ? "Ask about the PDF…"
+                        ? "Ask about the document…"
                         : document
                           ? "Wait until indexing finishes"
-                          : "Upload a PDF to enable chat"
+                          : "Add a PDF to enable chat"
                     }
                     disabled={
                       !documentReady ||
                       chat.isSending ||
                       (limitReached && !isAuthenticated)
                     }
-                    className="min-h-[52px] max-h-40 resize-none border-0 bg-transparent px-2.5 py-2 text-sm shadow-none focus-visible:ring-0"
+                    className="max-h-40 min-h-[52px] resize-none px-3 py-3 text-[13px] leading-6"
                   />
-                  <div className="flex items-center justify-between gap-2 px-0.5 pb-0.5">
-                    <div className="flex min-w-0 items-center gap-1">
-                      <button
-                        type="button"
-                        className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploadDisabled}
-                        aria-label={document ? "Replace PDF" : "Upload PDF"}
-                      >
-                        {isPreparing ? (
-                          <LoaderCircle className="size-3.5 animate-spin" />
-                        ) : (
-                          <Paperclip className="size-3.5" />
-                        )}
-                      </button>
-                      <span className="truncate text-[11px] text-muted-foreground">
-                        {document?.fileName ?? "No document loaded"}
-                      </span>
-                    </div>
 
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="hidden max-w-[150px] truncate text-[11px] text-muted-foreground sm:block">
-                        {composerHint}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={
-                          chat.isSending
-                            ? chat.handleStop
-                            : () => void chat.handleSend()
-                        }
-                        disabled={!chat.isSending && !canSend}
-                        aria-label={
-                          chat.isSending ? "Stop generating" : "Send message"
-                        }
-                        className="inline-flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        {chat.isSending ? (
-                          <Square className="size-3.5" />
-                        ) : (
-                          <ArrowUp className="size-4" />
-                        )}
-                      </button>
-                    </div>
+                  <div className="flex items-center gap-2 px-2 pb-2">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadDisabled}
+                      aria-label={document ? "Replace PDF" : "Upload PDF"}
+                      className="flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {isPreparing ? (
+                        <LoaderCircle className="size-3.5 animate-spin" />
+                      ) : (
+                        <Paperclip className="size-3.5" />
+                      )}
+                    </button>
+
+                    <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground/60">
+                      {document?.fileName ?? "No document loaded"}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={
+                        chat.isSending
+                          ? chat.handleStop
+                          : () => void chat.handleSend()
+                      }
+                      disabled={!chat.isSending && !canSend}
+                      aria-label={
+                        chat.isSending ? "Stop generating" : "Send message"
+                      }
+                      className="flex size-8 shrink-0 items-center justify-center bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      {chat.isSending ? (
+                        <Square className="size-3" />
+                      ) : (
+                        <ArrowUp className="size-4" />
+                      )}
+                    </button>
                   </div>
                 </div>
+
+                <p className="mt-1.5 truncate px-0.5 font-mono text-[9.5px] uppercase tracking-[0.08em] text-muted-foreground/50">
+                  {composerHint}
+                </p>
               </div>
             </PdfDropzone>
           </section>

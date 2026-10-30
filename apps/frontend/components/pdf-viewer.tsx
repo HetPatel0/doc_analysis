@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Document, Page, pdfjs, type DocumentProps } from "react-pdf";
 import {
   ChevronLeft,
@@ -9,11 +9,9 @@ import {
   LoaderCircle,
   Minus,
   Plus,
-  RotateCcw,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/scroll-area";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -26,7 +24,9 @@ type PdfViewerProps = {
 const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 2.4;
 const ZOOM_STEP = 0.2;
-const DEFAULT_ASPECT = 1.294; // A4-ish fallback for the loading skeleton.
+const PAGE_GUTTER = 40; // px-5 on both sides
+const MAX_PAGE_WIDTH = 980;
+const DEFAULT_ASPECT = 1.294; // A4-ish fallback while the document loads.
 
 type PdfDocument = Parameters<
   NonNullable<DocumentProps["onLoadSuccess"]>
@@ -35,68 +35,71 @@ type PdfDocument = Parameters<
 export function PdfViewer({ fileUrl, page, onPageChange }: PdfViewerProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const [numPages, setNumPages] = useState(0);
+  const [baseWidth, setBaseWidth] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
-  // `null` means "not measured yet". Nothing is rendered until the real width
-  // is known, so the first paint never shows the 300×150 canvas placeholder.
-  const [containerWidth, setContainerWidth] = useState<number | null>(null);
-  const [aspectRatio, setAspectRatio] = useState(DEFAULT_ASPECT);
-  const [isLoading, setIsLoading] = useState(true);
-  const [pageReady, setPageReady] = useState(false);
+  const [numPages, setNumPages] = useState(0);
+  const [aspect, setAspect] = useState(DEFAULT_ASPECT);
+  const [renderedToken, setRenderedToken] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // The skeleton state is derived from the identity of the render we are
+  // waiting for, instead of being reset from an effect. Changing the document
+  // or retrying produces a new token, so the skeleton returns without a
+  // setState-in-effect cascade.
+  const renderToken = `${fileUrl}-${reloadKey}`;
+  const pageReady = renderedToken === renderToken;
 
   useLayoutEffect(() => {
     const frame = frameRef.current;
-    const viewport = viewportRef.current;
-    if (!frame || !viewport) {
+
+    if (!frame) {
       return;
     }
 
     let raf = 0;
-    const updateWidth = () => {
-      const measured = viewport.clientWidth;
-      // A hidden mobile pane reports 0; wait for the next observer tick.
+
+    const measure = () => {
+      const measured = frame.clientWidth;
+
       if (measured < 240) {
         return;
       }
 
-      const nextWidth = Math.max(240, Math.min(measured - 32, 1100));
-      // Only react to real layout changes: sub-pixel churn here causes the
-      // PDF canvas to redraw constantly (visible flicker).
-      setContainerWidth((current) =>
-        current === null || Math.abs(current - nextWidth) >= 2
-          ? nextWidth
-          : current
+      const next = Math.min(measured - PAGE_GUTTER, MAX_PAGE_WIDTH);
+
+      // Only react to real layout changes; sub-pixel churn would redraw the
+      // canvas and read as a flicker.
+      setBaseWidth((current) =>
+        current === null || Math.abs(current - next) >= 2 ? next : current
       );
     };
 
-    updateWidth();
-    // Observe the outer frame, never the scroll container: observing the
-    // scroller feeds scrollbar appearance back into the page width.
+    measure();
+
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(updateWidth);
+      raf = requestAnimationFrame(measure);
     });
     observer.observe(frame);
+
     return () => {
       cancelAnimationFrame(raf);
       observer.disconnect();
     };
   }, []);
 
-  useEffect(() => {
-    viewportRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-  }, [page]);
-
   function clampPage(nextPage: number) {
     if (!numPages) {
       return Math.max(1, nextPage);
     }
+
     return Math.min(Math.max(1, nextPage), numPages);
   }
 
   function handlePageInput(raw: string) {
     const parsed = Number.parseInt(raw, 10);
+
     if (Number.isFinite(parsed)) {
       onPageChange(clampPage(parsed));
     }
@@ -104,47 +107,129 @@ export function PdfViewer({ fileUrl, page, onPageChange }: PdfViewerProps) {
 
   function adjustZoom(delta: number) {
     setZoom((current) =>
-      Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number((current + delta).toFixed(2))))
+      Math.min(
+        MAX_ZOOM,
+        Math.max(MIN_ZOOM, Number((current + delta).toFixed(2)))
+      )
     );
   }
 
   async function handleLoadSuccess(pdf: PdfDocument) {
-    const total = pdf.numPages;
-    setNumPages(total);
-    setIsLoading(false);
+    setNumPages(pdf.numPages);
     setLoadError(null);
 
     try {
       const firstPage = await pdf.getPage(1);
       const viewport = firstPage.getViewport({ scale: 1 });
+
       if (viewport.width > 0) {
-        setAspectRatio(viewport.height / viewport.width);
+        setAspect(viewport.height / viewport.width);
       }
     } catch {
-      // Keep the fallback aspect ratio; purely cosmetic.
+      // Cosmetic only: keep the A4 fallback.
     }
 
-    if (page > total) {
-      onPageChange(total);
+    if (page > pdf.numPages) {
+      onPageChange(pdf.numPages);
     }
   }
 
-  const pageWidth = (containerWidth ?? 0) * zoom;
+  const pageWidth = Math.round((baseWidth ?? 0) * zoom);
+  const pageHeight = Math.round(pageWidth * aspect);
 
   return (
-    <div ref={frameRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-card/40 px-2.5">
+    <div
+      ref={frameRef}
+      className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col"
+    >
+      {loadError ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+          <p className="text-[13px] text-foreground">Could not render the PDF</p>
+          <p className="max-w-sm text-[11px] leading-5 text-muted-foreground">
+            {loadError}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setLoadError(null);
+              setReloadKey((current) => current + 1);
+            }}
+            className="mt-1 bg-foreground/[0.06] px-3 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-foreground/[0.1]"
+          >
+            Try again
+          </button>
+        </div>
+      ) : (
+        <ScrollArea
+          className="flex-1"
+          viewportClassName="overflow-auto"
+          viewportRef={viewportRef}
+        >
+          {baseWidth === null ? (
+            <div className="h-full" />
+          ) : (
+            <div className="flex justify-center px-5 py-6">
+              <div
+                className="relative shrink-0"
+                style={{ width: pageWidth, minHeight: pageHeight }}
+                data-pdf-page-frame
+              >
+                {/*
+                 * The skeleton sits on top of the page until the canvas has
+                 * actually painted. The page is never faded in and the
+                 * skeleton is removed in one step, so there is no flash of a
+                 * white or default-sized canvas.
+                 */}
+                {!pageReady ? (
+                  <div
+                    aria-hidden
+                    className="absolute inset-x-0 top-0 z-10 flex items-center justify-center bg-muted/50"
+                    style={{ height: pageHeight }}
+                  >
+                    <LoaderCircle className="size-5 animate-spin text-muted-foreground/60" />
+                  </div>
+                ) : null}
+
+                <Document
+                  key={`${fileUrl}-${reloadKey}`}
+                  file={fileUrl}
+                  onLoadSuccess={handleLoadSuccess}
+                  onLoadError={(error) => {
+                    setRenderedToken(null);
+                    setLoadError(error.message);
+                  }}
+                  loading={<span />}
+                  error={<span />}
+                  className="block"
+                >
+                  <Page
+                    pageNumber={page}
+                    width={pageWidth}
+                    renderTextLayer={false}
+                    renderAnnotationLayer={false}
+                    onRenderSuccess={() => setRenderedToken(renderToken)}
+                    className="block bg-white shadow-[0_1px_2px_rgba(15,17,21,0.10),0_24px_56px_-28px_rgba(15,17,21,0.45)]"
+                  />
+                </Document>
+              </div>
+            </div>
+          )}
+        </ScrollArea>
+      )}
+
+      <div className="flex h-10 shrink-0 items-center justify-between gap-2 bg-card/55 px-3 backdrop-blur-xl">
         <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          <button
+            type="button"
             onClick={() => onPageChange(clampPage(page - 1))}
             disabled={page <= 1}
             aria-label="Previous page"
+            className="flex size-6 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
           >
             <ChevronLeft className="size-3.5" />
-          </Button>
-          <div className="flex items-center gap-1 px-1 text-xs text-muted-foreground">
+          </button>
+
+          <div className="flex items-center text-[11px] text-muted-foreground">
             <input
               type="number"
               min={1}
@@ -152,125 +237,62 @@ export function PdfViewer({ fileUrl, page, onPageChange }: PdfViewerProps) {
               value={page}
               onChange={(event) => handlePageInput(event.target.value)}
               aria-label="Page number"
-              className="h-6 w-11 rounded-md border border-border/80 bg-background px-1 text-center text-xs tabular-nums text-foreground [appearance:textfield] focus-visible:border-ring focus-visible:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              className="h-6 w-8 bg-transparent text-center tabular-nums text-foreground outline-none [appearance:textfield] hover:bg-foreground/[0.06] focus:bg-foreground/[0.06] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
-            <span className="tabular-nums">/ {numPages || "–"}</span>
+            <span className="px-0.5 tabular-nums">/ {numPages || "–"}</span>
           </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
+
+          <button
+            type="button"
             onClick={() => onPageChange(clampPage(page + 1))}
             disabled={!numPages || page >= numPages}
             aria-label="Next page"
+            className="flex size-6 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
           >
             <ChevronRight className="size-3.5" />
-          </Button>
+          </button>
         </div>
 
         <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          <button
+            type="button"
             onClick={() => adjustZoom(-ZOOM_STEP)}
             disabled={zoom <= MIN_ZOOM}
             aria-label="Zoom out"
+            className="flex size-6 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
           >
             <Minus className="size-3.5" />
-          </Button>
+          </button>
+
           <button
             type="button"
             onClick={() => setZoom(1)}
             aria-label="Reset zoom"
-            className="inline-flex h-6 min-w-11 items-center justify-center rounded-md px-1 text-xs tabular-nums text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="h-6 min-w-9 px-1 text-[11px] tabular-nums text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
           >
             {Math.round(zoom * 100)}%
           </button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
+
+          <button
+            type="button"
             onClick={() => adjustZoom(ZOOM_STEP)}
             disabled={zoom >= MAX_ZOOM}
             aria-label="Zoom in"
+            className="flex size-6 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
           >
             <Plus className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setZoom(1)}
-            aria-label="Reset zoom"
-          >
-            <RotateCcw className="size-3.5" />
-          </Button>
+          </button>
+
           <a
             href={fileUrl}
             target="_blank"
             rel="noreferrer"
             aria-label="Open PDF in a new tab"
-            className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="ml-1 flex size-6 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
           >
             <ExternalLink className="size-3.5" />
           </a>
         </div>
-      </div>
-
-      <div
-        ref={viewportRef}
-        className="min-h-0 flex-1 overflow-auto overscroll-contain p-4 [scrollbar-gutter:stable]"
-      >
-        {loadError ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
-            <p>Could not render the PDF.</p>
-            <p className="text-xs">{loadError}</p>
-          </div>
-        ) : containerWidth === null ? (
-          <div className="flex h-full items-center justify-center">
-            <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <Document
-            key={fileUrl}
-            file={fileUrl}
-            onLoadSuccess={handleLoadSuccess}
-            onLoadError={(error) => {
-              setIsLoading(false);
-              setLoadError(error.message);
-            }}
-            loading={
-              <div className="flex h-40 items-center justify-center">
-                <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
-              </div>
-            }
-            className="flex flex-col items-center"
-          >
-            {isLoading ? null : (
-              <div
-                className="relative"
-                style={{ width: pageWidth }}
-                data-pdf-page-frame
-              >
-                {!pageReady ? (
-                  <div
-                    aria-hidden
-                    className="absolute inset-x-0 top-0 animate-pulse rounded-md bg-muted/80"
-                    style={{ height: pageWidth * aspectRatio }}
-                  />
-                ) : null}
-                <Page
-                  pageNumber={page}
-                  width={pageWidth}
-                  renderTextLayer={false}
-                  renderAnnotationLayer={false}
-                  onRenderSuccess={() => setPageReady(true)}
-                  className={cn(
-                    "relative z-10 overflow-hidden rounded-md bg-white shadow-[0_1px_2px_rgba(0,0,0,0.08),0_12px_32px_-12px_rgba(0,0,0,0.18)] transition-opacity duration-300",
-                    pageReady ? "opacity-100" : "opacity-0"
-                  )}
-                />
-              </div>
-            )}
-          </Document>
-        )}
       </div>
     </div>
   );

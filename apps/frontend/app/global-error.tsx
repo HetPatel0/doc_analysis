@@ -43,9 +43,10 @@ export default function GlobalError({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "0.5rem",
-                borderRadius: "0.75rem",
-                border: "1px solid #ccc",
                 padding: "0.5rem 1rem",
+                background: "#1f2937",
+                color: "#fff",
+                border: "none",
                 cursor: "pointer",
               }}
             >

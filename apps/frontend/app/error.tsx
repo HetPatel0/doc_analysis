@@ -18,10 +18,13 @@ export default function Error({
   }, [error]);
 
   return (
-    <main className="flex h-[100dvh] items-center justify-center px-4">
-      <div className="flex max-w-md flex-col items-center gap-4 rounded-[1.5rem] border border-border bg-card px-6 py-10 text-center shadow-lg">
+    <main className="app-canvas flex h-[100dvh] items-center justify-center px-4">
+      <div className="glass-strong flex max-w-md flex-col items-center gap-4 px-6 py-10 text-center shadow-[0_40px_120px_-48px_rgba(0,0,0,0.55)]">
         <div className="space-y-2">
-          <p className="text-lg font-semibold text-foreground">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">
+            Unexpected error
+          </p>
+          <p className="text-lg font-semibold tracking-tight text-foreground">
             Something went wrong
           </p>
           <p className="text-sm leading-6 text-muted-foreground">

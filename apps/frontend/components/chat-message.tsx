@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo, useState, type ComponentProps } from "react";
-import { Check, Copy, FileText, RotateCcw } from "lucide-react";
+import { Check, Copy, RotateCcw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { cn } from "@/lib/utils";
 import { splitSourceFooter } from "@/lib/citations";
+import { cn } from "@/lib/utils";
 import type { Citation } from "@/lib/workspace-types";
 
 export type Message = {
@@ -32,7 +32,8 @@ type MarkdownNode = {
   children?: MarkdownNode[];
 };
 
-const CITATION_TOKEN = /\[(?:source:\s*)?p\.\s*(\d+)(?:,\s*chunk\s*\d+)?\]/gi;
+const CITATION_TOKEN =
+  /\[(?:source:\s*)?p\.\s*(\d+)(?:,\s*chunk\s*\d+)?\]/gi;
 
 function citationNodes(value: string): MarkdownNode[] {
   const nodes: MarkdownNode[] = [];
@@ -65,29 +66,37 @@ function citationNodes(value: string): MarkdownNode[] {
   return nodes;
 }
 
-/** Turn inline `[p. 3]` / `[p. 3, chunk 2]` mentions into page links. */
+/** Turn inline `[p. 3]` / `[Source: p. 3, chunk 2]` mentions into page links. */
 function remarkCitationLinks() {
   return (tree: unknown) => {
     const root = tree as MarkdownNode;
 
-    function walk(node: MarkdownNode) {
+    function walk(node: MarkdownNode, insideLink = false) {
       if (!node.children) {
         return;
       }
 
+      const nested = insideLink || node.type === "link" || node.type === "linkReference";
+
       node.children = node.children.flatMap((child) => {
-        if (child.type === "text" && child.value) {
+        if (!nested && child.type === "text" && child.value) {
           const replacement = citationNodes(child.value);
-          return replacement.length > 0 ? replacement : [child];
+          if (replacement.length > 0) {
+            return replacement;
+          }
         }
 
-        walk(child);
+        walk(child, nested);
         return [child];
       });
     }
 
     walk(root);
   };
+}
+
+function pageLabel(citation: Citation) {
+  return citation.page ? `p. ${citation.page}` : citation.label;
 }
 
 export function ChatMessage({
@@ -97,13 +106,17 @@ export function ChatMessage({
 }: ChatMessageProps) {
   const [copied, setCopied] = useState(false);
 
-  const parsed = useMemo(() => splitSourceFooter(message.content), [message.content]);
+  const parsed = useMemo(
+    () => splitSourceFooter(message.content),
+    [message.content]
+  );
   const citations = message.citations?.length
     ? message.citations
     : parsed.citations;
-  const body = citations.length > 0 && parsed.citations.length > 0
-    ? parsed.body
-    : message.content;
+  const body =
+    citations.length > 0 && parsed.citations.length > 0
+      ? parsed.body
+      : message.content;
 
   async function handleCopy() {
     try {
@@ -131,24 +144,34 @@ export function ChatMessage({
           type="button"
           onClick={() => onCitationClick(page)}
           title={`Jump to page ${page}`}
-          className="mx-0.5 inline-flex items-center rounded-md bg-accent px-1.5 py-0.5 align-baseline text-[0.75em] font-medium text-accent-foreground no-underline transition-colors hover:bg-accent/70"
+          className="mx-0.5 inline text-[11px] font-medium text-primary underline decoration-primary/30 underline-offset-[3px] transition-colors hover:decoration-primary"
         >
-          {children}
+          {`p. ${page}`}
         </button>
       );
     }
 
-    return <a href={href}>{children}</a>;
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="text-primary underline underline-offset-4"
+      >
+        {children}
+      </a>
+    );
   }
 
   if (message.role === "user") {
     return (
-      <div className="flex w-full justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-muted px-3.5 py-2.5 text-foreground">
-          <p className="whitespace-pre-wrap text-sm leading-6 break-words">
-            {message.content}
-          </p>
-        </div>
+      <div className="flex w-full flex-col gap-1.5">
+        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/60">
+          You
+        </span>
+        <p className="whitespace-pre-wrap bg-foreground/[0.045] px-3.5 py-2.5 text-[13.5px] leading-6 break-words text-foreground">
+          {message.content}
+        </p>
       </div>
     );
   }
@@ -156,21 +179,22 @@ export function ChatMessage({
   return (
     <div className="group/msg flex w-full flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
-        <p
+        <span
           className={cn(
-            "text-[11px] font-medium uppercase tracking-[0.16em]",
-            message.error ? "text-destructive" : "text-muted-foreground/80"
+            "font-mono text-[10px] uppercase tracking-[0.18em]",
+            message.error ? "text-destructive" : "text-muted-foreground/60"
           )}
         >
           {message.error ? "Error" : "Assistant"}
-        </p>
-        <div className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100">
+        </span>
+
+        <div className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100">
           {canRetry ? (
             <button
               type="button"
               onClick={() => onRetry?.(message.retryPrompt!)}
               aria-label="Retry message"
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
             >
               <RotateCcw className="size-3" />
               Retry
@@ -181,7 +205,7 @@ export function ChatMessage({
               type="button"
               onClick={handleCopy}
               aria-label="Copy answer"
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
             >
               {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
               {copied ? "Copied" : "Copy"}
@@ -192,7 +216,7 @@ export function ChatMessage({
 
       <div
         className={cn(
-          "prose prose-sm max-w-none text-sm leading-7 break-words dark:prose-invert prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1",
+          "prose prose-sm max-w-none text-[13.5px] leading-6 break-words dark:prose-invert prose-p:my-2 prose-headings:mb-2 prose-headings:mt-4 prose-headings:font-semibold prose-headings:tracking-tight prose-li:my-0.5 prose-ol:my-2 prose-pre:bg-foreground/[0.05] prose-pre:text-foreground prose-code:bg-foreground/[0.06] prose-code:px-1 prose-code:py-0.5 prose-code:text-[0.85em] prose-code:font-normal prose-strong:text-foreground prose-strong:font-semibold prose-a:text-primary",
           message.error && "text-destructive"
         )}
       >
@@ -204,38 +228,35 @@ export function ChatMessage({
             {body}
           </ReactMarkdown>
         ) : (
-          <span className="inline-block size-2 animate-pulse rounded-full bg-muted-foreground" />
+          <span className="inline-block size-1.5 animate-pulse bg-foreground/50" />
         )}
       </div>
 
       {citations.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-0.5 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/70">
-            Sources
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
+          <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground/50">
+            Pages
           </span>
-          {citations.map((citation, index) => {
-            const label = citation.label;
-            return citation.page && onCitationClick ? (
+          {citations.map((citation, index) =>
+            citation.page && onCitationClick ? (
               <button
                 key={`${citation.label}-${citation.page}-${index}`}
                 type="button"
                 onClick={() => onCitationClick(citation.page!)}
                 title={`Jump to page ${citation.page}`}
-                className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="text-[11px] text-muted-foreground underline-offset-[3px] transition-colors hover:text-primary hover:underline"
               >
-                <FileText className="size-3" />
-                {label}
+                {pageLabel(citation)}
               </button>
             ) : (
               <span
                 key={`${citation.label}-${citation.page ?? "none"}-${index}`}
-                className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
+                className="text-[11px] text-muted-foreground/80"
               >
-                <FileText className="size-3" />
-                {label}
+                {pageLabel(citation)}
               </span>
-            );
-          })}
+            )
+          )}
         </div>
       ) : null}
     </div>

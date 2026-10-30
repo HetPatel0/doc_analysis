@@ -88,27 +88,29 @@ export function PdfDropzone({
       {children}
 
       {showOverlay ? (
-        <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-primary/50 bg-background/70 backdrop-blur-md">
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/75 backdrop-blur-lg">
           <div className="flex flex-col items-center gap-2 text-center">
-            <UploadCloud className="size-7 text-primary" />
-            <p className="text-sm font-medium text-foreground">Drop your PDF here</p>
+            <UploadCloud className="size-6 text-primary" />
+            <p className="text-[12.5px] font-medium text-foreground">
+              Drop your PDF here
+            </p>
           </div>
         </div>
       ) : null}
 
       {isUploading ? (
         <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20">
-          <div className="glass-strong rounded-xl border border-border/70 px-3 py-2 shadow-lg">
-            <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
+          <div className="glass-strong px-3 py-2.5 shadow-[0_18px_48px_-24px_rgba(0,0,0,0.5)]">
+            <div className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <LoaderCircle className="size-3 animate-spin" />
                 Uploading PDF
               </span>
               <span className="tabular-nums">{progress}%</span>
             </div>
-            <div className="h-1 overflow-hidden rounded-full bg-muted">
+            <div className="h-[2px] overflow-hidden bg-foreground/[0.08]">
               <div
-                className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+                className="h-full bg-primary transition-[width] duration-200 ease-out"
                 style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
               />
             </div>

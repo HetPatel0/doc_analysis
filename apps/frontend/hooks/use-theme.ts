@@ -4,32 +4,40 @@ import { useCallback, useEffect, useState } from "react";
 
 type Theme = "light" | "dark";
 
+function readTheme(): Theme {
+  const saved = window.localStorage.getItem("bookify-theme");
+  if (saved === "dark" || saved === "light") {
+    return saved;
+  }
+
+  // The inline script in the root layout already resolved the system theme.
+  return window.document.documentElement.classList.contains("dark")
+    ? "dark"
+    : "light";
+}
+
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>("light");
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    const savedTheme = window.localStorage.getItem("bookify-theme");
-    const systemPrefersDark = window.matchMedia(
-      "(prefers-color-scheme: dark)"
-    ).matches;
-    const nextTheme: Theme =
-      savedTheme === "dark" || savedTheme === "light"
-        ? savedTheme
-        : systemPrefersDark
-          ? "dark"
-          : "light";
-
-    // Hydration-safe: the initial render must match the server, so the saved
-    // theme is applied after mount rather than in the useState initializer.
+    // Read what the pre-paint script applied instead of guessing, so the first
+    // client render never toggles the class (which would look like a flash).
+    const initial = readTheme();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTheme(nextTheme);
+    setTheme(initial);
+    setIsReady(true);
   }, []);
 
   useEffect(() => {
+    if (!isReady) {
+      return;
+    }
+
     const root = window.document.documentElement;
     root.classList.toggle("dark", theme === "dark");
     window.localStorage.setItem("bookify-theme", theme);
-  }, [theme]);
+  }, [isReady, theme]);
 
   const toggleTheme = useCallback(() => {
     setTheme((current) => (current === "dark" ? "light" : "dark"));
