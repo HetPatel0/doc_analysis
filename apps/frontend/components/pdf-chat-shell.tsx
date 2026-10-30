@@ -6,13 +6,11 @@ import {
   FileText,
   LoaderCircle,
   LogIn,
-  LogOut,
   Moon,
   Paperclip,
+  Plus,
   Square,
   Sun,
-  Trash2,
-  UserPlus,
 } from "lucide-react";
 
 import { authClient } from "@/lib/auth-client";
@@ -22,8 +20,6 @@ import { cn } from "@/lib/utils";
 import { GUEST_CHAT_LIMIT, type DocumentSummary } from "@/lib/workspace-types";
 
 import { AuthForm, type AuthMode } from "@/components/auth-form";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { ChatMessage } from "@/components/chat-message";
 import { DocSidebar } from "@/components/doc-sidebar";
 import { DocumentPanel } from "@/components/document-panel";
@@ -40,6 +36,13 @@ const starterPrompts = [
   "List the key action items.",
   "Explain the main argument in plain English.",
 ];
+
+const statusText: Record<DocumentSummary["status"], string> = {
+  queued: "Queued",
+  indexing: "Indexing",
+  ready: "Ready",
+  failed: "Failed",
+};
 
 export default function PdfChatShell() {
   const sessionQuery = authClient.useSession();
@@ -87,6 +90,7 @@ export default function PdfChatShell() {
   const document = workspace.document;
   const documents = workspace.workspace?.documents ?? [];
   const isAuthenticated = workspace.workspace?.viewer.isAuthenticated ?? false;
+  const userEmail = workspace.workspace?.viewer.email ?? null;
   const remainingChats = workspace.workspace?.limits.remainingChats ?? null;
   const limitReached = workspace.workspace?.limits.limitReached ?? false;
   const uploadAllowed = workspace.workspace?.limits.uploadAllowed ?? true;
@@ -125,6 +129,7 @@ export default function PdfChatShell() {
   const activeDocumentId = document?.documentId ?? null;
   const viewerPage =
     viewer.documentId === activeDocumentId ? viewer.page : 1;
+  const setDocument = workspace.setDocument;
 
   useEffect(() => {
     if (!activeDocumentId || document?.status !== "ready") {
@@ -146,7 +151,7 @@ export default function PdfChatShell() {
           ((await response.json()) as DocumentSummary & ErrorResponse) ?? {};
 
         if (!cancelled && response.ok && result.documentId) {
-          workspace.setDocument(result);
+          setDocument(result);
         } else if (!cancelled) {
           detailsFetchedRef.current = null;
         }
@@ -162,7 +167,7 @@ export default function PdfChatShell() {
     return () => {
       cancelled = true;
     };
-  }, [activeDocumentId, document?.status, workspace]);
+  }, [activeDocumentId, document?.status, setDocument]);
 
   function setViewerPage(page: number) {
     setViewer({ documentId: activeDocumentId, page });
@@ -294,6 +299,7 @@ export default function PdfChatShell() {
 
     try {
       await workspace.selectDocument(documentId);
+      setMobileTab("document");
     } catch (error) {
       chat.appendAssistant(
         toErrorMessage(error, "Could not switch documents.")
@@ -306,182 +312,157 @@ export default function PdfChatShell() {
     await loadWorkspace();
   }
 
-  const topBadge = isAuthenticated
-    ? "Unlimited chats"
-    : `${remainingChats ?? GUEST_CHAT_LIMIT} / ${GUEST_CHAT_LIMIT} chats left`;
+  function openAuth(mode: AuthMode) {
+    setAuthMode(mode);
+    setShowAuthForm(true);
+  }
 
   const uploadDisabled = isPreparing || (!uploadAllowed && !isAuthenticated);
+  const isChatEmpty =
+    !document &&
+    !workspace.isWorkspaceLoading &&
+    chat.messages.every((message) => message.id === "welcome");
+
+  const composerHint =
+    limitReached && !isAuthenticated
+      ? "Guest limit reached. Log in to continue."
+      : documentReady
+        ? chat.isSending
+          ? "Waiting for the response…"
+          : "Enter to send · Shift + Enter for a new line"
+        : document
+          ? "Document is indexing…"
+          : "Add a PDF to enable chat";
 
   return (
-    <main className="h-[100dvh] overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
-      <div className="mx-auto flex h-full max-w-7xl overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-lg">
-        <div className="hidden h-full md:block">
-          <DocSidebar
-            documents={documents}
-            activeDocumentId={document?.documentId ?? null}
-            deletingDocumentId={deletingDocumentId}
-            uploadDisabled={uploadDisabled}
-            isUploading={isPreparing}
-            onSelect={(documentId) => void handleSelectDocument(documentId)}
-            onDelete={(documentId) => void handleDelete(documentId)}
-            onUpload={() => fileInputRef.current?.click()}
-          />
+    <main className="app-canvas flex h-[100dvh] w-full overflow-hidden">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
+      <DocSidebar
+        documents={documents}
+        activeDocumentId={activeDocumentId}
+        deletingDocumentId={deletingDocumentId}
+        uploadDisabled={uploadDisabled}
+        isUploading={isPreparing}
+        remainingChats={remainingChats ?? GUEST_CHAT_LIMIT}
+        isAuthenticated={isAuthenticated}
+        userEmail={userEmail}
+        theme={theme}
+        onSelect={(documentId) => void handleSelectDocument(documentId)}
+        onDelete={(documentId) => void handleDelete(documentId)}
+        onUpload={() => fileInputRef.current?.click()}
+        onToggleTheme={toggleTheme}
+        onSignIn={() => openAuth("sign-in")}
+        onSignUp={() => openAuth("sign-up")}
+        onSignOut={() => void handleSignOut()}
+      />
+
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* Mobile top bar */}
+        <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 lg:hidden">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-semibold text-primary-foreground">
+              B
+            </div>
+            {documents.length > 1 ? (
+              <select
+                value={activeDocumentId ?? ""}
+                onChange={(event) =>
+                  void handleSelectDocument(event.target.value)
+                }
+                aria-label="Switch document"
+                className="min-w-0 max-w-[180px] truncate rounded-md border border-border/70 bg-card/70 px-2 py-1 text-xs text-foreground"
+              >
+                {documents.map((doc) => (
+                  <option key={doc.documentId} value={doc.documentId}>
+                    {doc.fileName}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="truncate text-sm font-semibold tracking-tight">
+                Bookify
+              </p>
+            )}
+          </div>
+
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={toggleTheme}
+              aria-label="Toggle theme"
+              className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {theme === "dark" ? (
+                <Sun className="size-4" />
+              ) : (
+                <Moon className="size-4" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadDisabled}
+              aria-label="Add PDF"
+              className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+            >
+              {isPreparing ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <Plus className="size-4" />
+              )}
+            </button>
+            {isAuthenticated ? (
+              <button
+                type="button"
+                onClick={() => void handleSignOut()}
+                className="inline-flex h-8 items-center rounded-lg px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                Sign out
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => openAuth("sign-in")}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-xs font-medium text-primary-foreground"
+              >
+                <LogIn className="size-3.5" />
+                Log in
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/pdf"
-            className="hidden"
-            onChange={handleFileChange}
-          />
-
-          <header className="border-b border-border px-4 py-3 sm:px-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-3">
-                <span className="flex size-9 items-center justify-center rounded-xl border border-border bg-background text-sm font-semibold">
-                  B
-                </span>
-                <div>
-                  <p className="text-base font-semibold tracking-[-0.02em] text-foreground">
-                    Bookify
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Chat with your documents.
-                  </p>
-                </div>
-              </div>
-              {documents.length > 1 ? (
-                <select
-                  value={document?.documentId ?? ""}
-                  onChange={(event) =>
-                    void handleSelectDocument(event.target.value)
-                  }
-                  aria-label="Switch document"
-                  className="block w-full max-w-xs rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground md:hidden"
+        {/* Mobile pane switcher */}
+        <div className="flex shrink-0 gap-1 border-b border-border/70 p-2 md:hidden">
+          {(["document", "chat"] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setMobileTab(tab)}
+              aria-pressed={mobileTab === tab}
+              className={cn(
+                "flex-1 rounded-lg px-3 py-1.5 text-xs font-medium capitalize transition-colors",
+                mobileTab === tab
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+              )}
             >
-                  {documents.map((doc) => (
-                    <option key={doc.documentId} value={doc.documentId}>
-                      {doc.fileName}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
-              {document ? (
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <Badge variant="outline" className="rounded-full px-2.5 py-1">
-                    {document.status}
-                  </Badge>
-                  <span>{document.fileName}</span>
-                  {document.chunksIndexed ? (
-                    <span>{document.chunksIndexed} chunks indexed</span>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => void handleDelete(document.documentId)}
-                    disabled={workspace.isDeleting || isPreparing}
-                    className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 transition-colors hover:border-destructive/50 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {deletingDocumentId === document.documentId ? (
-                      <LoaderCircle className="size-3 animate-spin" />
-                    ) : (
-                      <Trash2 className="size-3" />
-                    )}
-                    Delete
-                  </button>
-                </div>
-              ) : (
-                <p className="pt-1 text-xs text-muted-foreground">
-                  Upload a PDF to start the conversation.
-                </p>
-              )}
-            </div>
+              {tab}
+            </button>
+          ))}
+        </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge className="rounded-full px-3 py-1.5">{topBadge}</Badge>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={toggleTheme}
-                aria-label="Toggle dark mode"
-              >
-                {theme === "dark" ? (
-                  <Sun className="size-4" />
-                ) : (
-                  <Moon className="size-4" />
-                )}
-              </Button>
-              {isAuthenticated ? (
-                <>
-                  <div className="hidden rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground sm:block">
-                    {workspace.workspace?.viewer.email ?? "Signed in"}
-                  </div>
-                  <Button variant="outline" onClick={handleSignOut}>
-                    <LogOut className="size-4" />
-                    Sign out
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setAuthMode("sign-in");
-                      setShowAuthForm((current) => !current || authMode !== "sign-in");
-                    }}
-                  >
-                    <LogIn className="size-4" />
-                    Log in
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      setAuthMode("sign-up");
-                      setShowAuthForm((current) => !current || authMode !== "sign-up");
-                    }}
-                  >
-                    <UserPlus className="size-4" />
-                    Create account
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {showAuthForm && !isAuthenticated ? (
-          <AuthForm
-            mode={authMode}
-            onModeChange={setAuthMode}
-            onClose={() => setShowAuthForm(false)}
-            onAuthenticated={handleAuthenticated}
-          />
-        ) : null}
-
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
-          <div className="flex items-center gap-1 border-b border-border p-2 md:hidden">
-            {(["chat", "document"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setMobileTab(tab)}
-                aria-pressed={mobileTab === tab}
-                className={cn(
-                  "flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                  mobileTab === tab
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {tab === "chat" ? "Chat" : "Document"}
-              </button>
-            ))}
-          </div>
-
+        <div className="flex min-h-0 flex-1 md:flex-row">
           <section
             className={cn(
-              "min-h-0 flex-1 border-border md:flex md:max-w-[56%] md:border-r",
+              "min-h-0 min-w-0 flex-1 md:flex",
               mobileTab === "document" ? "flex" : "hidden"
             )}
           >
@@ -490,12 +471,18 @@ export default function PdfChatShell() {
               document={document}
               page={viewerPage}
               onPageChange={setViewerPage}
+              isDeleting={Boolean(
+                document && deletingDocumentId === document.documentId
+              )}
+              onDelete={
+                document ? () => void handleDelete(document.documentId) : undefined
+              }
             />
           </section>
 
           <section
             className={cn(
-              "min-h-0 flex-1 md:flex",
+              "min-h-0 min-w-0 border-border/70 md:flex md:w-[400px] md:flex-none md:border-l lg:w-[420px] xl:w-[470px]",
               mobileTab === "chat" ? "flex" : "hidden"
             )}
           >
@@ -505,33 +492,63 @@ export default function PdfChatShell() {
               disabled={uploadDisabled}
               isUploading={isPreparing}
               progress={uploadProgress}
-              className="grid h-full min-h-0 w-full grid-rows-[minmax(0,1fr)_auto] overflow-hidden"
+              className="flex h-full min-h-0 w-full flex-col"
             >
+              <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-3.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      document?.status === "ready"
+                        ? "bg-emerald-500"
+                        : document?.status === "failed"
+                          ? "bg-destructive"
+                          : document
+                            ? "animate-pulse bg-amber-500"
+                            : "bg-muted-foreground/50"
+                    )}
+                  />
+                  <p className="shrink-0 text-sm font-medium text-foreground">
+                    Assistant
+                  </p>
+                  {document ? (
+                    <span className="min-w-0 truncate text-xs text-muted-foreground">
+                      {document.fileName}
+                    </span>
+                  ) : null}
+                </div>
+                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                  {document ? statusText[document.status] : "No document"}
+                </span>
+              </div>
+
               <div
                 ref={messagesViewportRef}
                 onScroll={handleMessagesScroll}
-                className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
               >
-                {!document &&
-                !workspace.isWorkspaceLoading &&
-                chat.messages.every((message) => message.id === "welcome") ? (
-                  <div className="flex min-h-full items-center justify-center">
-                    <div className="flex max-w-xl flex-col items-center justify-center gap-5 rounded-[1.5rem] border border-dashed border-border bg-background px-6 py-12 text-center">
-                      <div className="space-y-2">
-                        <p className="text-lg font-medium text-foreground">
-                          Upload a PDF to start
+                {isChatEmpty ? (
+                  <div className="flex min-h-full items-center justify-center px-6 py-10">
+                    <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
+                      <div className="flex size-12 items-center justify-center rounded-2xl bg-accent text-accent-foreground">
+                        <FileText className="size-5" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="text-base font-semibold tracking-tight text-foreground">
+                          Start with a PDF
                         </p>
-                        <p className="max-w-md text-sm leading-6 text-muted-foreground">
-                          Guest mode gives one document and three questions. Log in if
-                          you want to keep going after that. You can also drag a PDF
-                          anywhere on this panel.
+                        <p className="text-[13px] leading-6 text-muted-foreground">
+                          Guest mode includes one document and three questions.
+                          Drag a file anywhere in this panel, or choose one
+                          below.
                         </p>
                       </div>
-                      <Button
-                        size="lg"
-                        className="h-11 rounded-xl px-5"
+                      <button
+                        type="button"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={uploadDisabled}
+                        className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {isPreparing ? (
                           <LoaderCircle className="size-4 animate-spin" />
@@ -539,17 +556,24 @@ export default function PdfChatShell() {
                           <FileText className="size-4" />
                         )}
                         Choose PDF
-                      </Button>
-
+                      </button>
                       {!uploadAllowed && !isAuthenticated ? (
-                        <p className="text-sm text-muted-foreground">
-                          Guest upload already used. Log in to upload another file.
+                        <p className="text-xs text-muted-foreground">
+                          Guest upload already used.{" "}
+                          <button
+                            type="button"
+                            onClick={() => openAuth("sign-in")}
+                            className="font-medium text-foreground underline underline-offset-4"
+                          >
+                            Log in
+                          </button>{" "}
+                          to add another file.
                         </p>
                       ) : null}
                     </div>
                   </div>
                 ) : (
-                  <div className="flex min-h-full flex-col gap-4 pb-2">
+                  <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-5">
                     {chat.messages.map((message) => (
                       <ChatMessage
                         key={message.id}
@@ -562,47 +586,14 @@ export default function PdfChatShell() {
                 )}
               </div>
 
-              <div className="border-t border-border bg-card px-4 py-3 sm:px-5">
-                <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 transition-colors hover:border-foreground/15 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploadDisabled}
-                    >
-                      {isPreparing ? (
-                        <LoaderCircle className="size-3.5 animate-spin" />
-                      ) : (
-                        <Paperclip className="size-3.5" />
-                      )}
-                      {document ? "Replace PDF" : "Upload PDF"}
-                    </button>
-                    {document ? (
-                      <span>{document.fileName}</span>
-                    ) : (
-                      <span>No document loaded</span>
-                    )}
-                  </div>
-
-                  {!isAuthenticated ? (
-                    <span className="text-xs text-muted-foreground">
-                      {remainingChats ?? GUEST_CHAT_LIMIT} guest chats remaining
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">
-                      Logged in as {workspace.workspace?.viewer.email ?? "user"}
-                    </span>
-                  )}
-                </div>
-
+              <div className="shrink-0 px-3 pb-3 pt-1">
                 {documentReady ? (
-                  <div className="flex flex-wrap gap-2 pb-3">
+                  <div className="flex flex-wrap gap-1.5 pb-2">
                     {starterPrompts.map((item) => (
                       <button
                         key={item}
                         type="button"
-                        className="rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/15 hover:text-foreground"
+                        className="rounded-full border border-border/70 bg-card/60 px-3 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
                         onClick={() => chat.setPrompt(item)}
                       >
                         {item}
@@ -611,55 +602,84 @@ export default function PdfChatShell() {
                   </div>
                 ) : null}
 
-                <div className="rounded-[1.5rem] border border-border bg-background p-3">
+                <div className="glass rounded-2xl border border-border/70 p-1.5 shadow-sm">
                   <Textarea
                     value={chat.prompt}
                     onChange={(event) => chat.setPrompt(event.target.value)}
                     placeholder={
                       documentReady
-                        ? "Ask about the PDF..."
+                        ? "Ask about the PDF…"
                         : document
                           ? "Wait until indexing finishes"
                           : "Upload a PDF to enable chat"
                     }
                     disabled={
-                      !documentReady || chat.isSending || (limitReached && !isAuthenticated)
+                      !documentReady ||
+                      chat.isSending ||
+                      (limitReached && !isAuthenticated)
                     }
-                    className="min-h-24 max-h-48 resize-y border-0 bg-transparent px-1 py-1 shadow-none focus-visible:ring-0"
+                    className="min-h-[52px] max-h-40 resize-none border-0 bg-transparent px-2.5 py-2 text-sm shadow-none focus-visible:ring-0"
                   />
-                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
-                    <p className="text-xs text-muted-foreground">
-                      {limitReached && !isAuthenticated
-                        ? "Guest limit reached. Log in to continue with this document."
-                        : documentReady
-                          ? chat.isSending
-                            ? "Waiting for the response."
-                            : "Document is ready."
-                          : document
-                            ? "Document is indexing."
-                            : "No document uploaded yet."}
-                    </p>
-                    <Button
-                      size="icon-lg"
-                      className="rounded-xl"
-                      onClick={chat.isSending ? chat.handleStop : () => void chat.handleSend()}
-                      disabled={!chat.isSending && !canSend}
-                      aria-label={chat.isSending ? "Stop generating" : "Send message"}
-                    >
-                      {chat.isSending ? (
-                        <Square className="size-4" />
-                      ) : (
-                        <ArrowUp className="size-4" />
-                      )}
-                    </Button>
+                  <div className="flex items-center justify-between gap-2 px-0.5 pb-0.5">
+                    <div className="flex min-w-0 items-center gap-1">
+                      <button
+                        type="button"
+                        className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadDisabled}
+                        aria-label={document ? "Replace PDF" : "Upload PDF"}
+                      >
+                        {isPreparing ? (
+                          <LoaderCircle className="size-3.5 animate-spin" />
+                        ) : (
+                          <Paperclip className="size-3.5" />
+                        )}
+                      </button>
+                      <span className="truncate text-[11px] text-muted-foreground">
+                        {document?.fileName ?? "No document loaded"}
+                      </span>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="hidden max-w-[150px] truncate text-[11px] text-muted-foreground sm:block">
+                        {composerHint}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={
+                          chat.isSending
+                            ? chat.handleStop
+                            : () => void chat.handleSend()
+                        }
+                        disabled={!chat.isSending && !canSend}
+                        aria-label={
+                          chat.isSending ? "Stop generating" : "Send message"
+                        }
+                        className="inline-flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {chat.isSending ? (
+                          <Square className="size-3.5" />
+                        ) : (
+                          <ArrowUp className="size-4" />
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             </PdfDropzone>
           </section>
         </div>
-        </div>
       </div>
+
+      {showAuthForm && !isAuthenticated ? (
+        <AuthForm
+          mode={authMode}
+          onModeChange={setAuthMode}
+          onClose={() => setShowAuthForm(false)}
+          onAuthenticated={handleAuthenticated}
+        />
+      ) : null}
     </main>
   );
 }

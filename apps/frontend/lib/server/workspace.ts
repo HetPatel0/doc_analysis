@@ -678,7 +678,65 @@ export async function streamChatForActor(
     })
     .where(eq(documents.documentId, documentId));
 
-  return backendResponse.body;
+  // The backend streams SSE tokens, so the answer only exists on the wire.
+  // Tee the stream and persist the assembled assistant message when it ends.
+  const decoder = new TextDecoder();
+  let pending = "";
+  let assistantText = "";
+
+  function consume(text: string) {
+    pending += text;
+    let boundary = pending.indexOf("\n\n");
+
+    while (boundary !== -1) {
+      const block = pending.slice(0, boundary);
+      pending = pending.slice(boundary + 2);
+
+      const event = /^event:\s*(.+)$/m.exec(block)?.[1]?.trim();
+      if (event === "token") {
+        const data = /^data:\s*(.+)$/m.exec(block)?.[1];
+        if (data) {
+          try {
+            const parsed = JSON.parse(data) as { token?: string };
+            if (typeof parsed.token === "string") {
+              assistantText += parsed.token;
+            }
+          } catch {
+            // Ignore malformed frames; the raw stream still reaches the client.
+          }
+        }
+      }
+
+      boundary = pending.indexOf("\n\n");
+    }
+  }
+
+  return backendResponse.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        controller.enqueue(chunk);
+        consume(decoder.decode(chunk, { stream: true }));
+      },
+      async flush() {
+        consume(decoder.decode());
+        const content = assistantText.trim().slice(0, MAX_MESSAGE_CHARS);
+
+        if (!content) {
+          return;
+        }
+
+        try {
+          await db.insert(messages).values({
+            documentId,
+            role: "assistant",
+            content,
+          });
+        } catch (error) {
+          console.error("Could not persist the assistant message.", error);
+        }
+      },
+    })
+  );
 }
 
 export async function syncDocumentStatus(

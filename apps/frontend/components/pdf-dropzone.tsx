@@ -88,7 +88,7 @@ export function PdfDropzone({
       {children}
 
       {showOverlay ? (
-        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[1.75rem] border-2 border-dashed border-primary/60 bg-background/85 backdrop-blur-sm">
+        <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-primary/50 bg-background/70 backdrop-blur-md">
           <div className="flex flex-col items-center gap-2 text-center">
             <UploadCloud className="size-7 text-primary" />
             <p className="text-sm font-medium text-foreground">Drop your PDF here</p>
@@ -97,16 +97,16 @@ export function PdfDropzone({
       ) : null}
 
       {isUploading ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-4 pb-4 sm:px-5">
-          <div className="rounded-xl border border-border bg-card px-3 py-2 shadow-sm">
+        <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20">
+          <div className="glass-strong rounded-xl border border-border/70 px-3 py-2 shadow-lg">
             <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <LoaderCircle className="size-3 animate-spin" />
                 Uploading PDF
               </span>
-              <span>{progress}%</span>
+              <span className="tabular-nums">{progress}%</span>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className="h-1 overflow-hidden rounded-full bg-muted">
               <div
                 className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
                 style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
