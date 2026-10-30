@@ -38,7 +38,7 @@ class Settings:
     retrieval_fetch_k: int = int(os.getenv("RAG_RETRIEVAL_FETCH_K", "16"))
     retrieval_top_k: int = int(os.getenv("RAG_RETRIEVAL_TOP_K", "5"))
 
-    mistral_model: str = os.getenv("MISTRAL_MODEL", "mistral-small-2506")
+    mistral_model: str = os.getenv("MISTRAL_MODEL", "open-mistral-nemo")
     cors_origins: list[str] = _csv(
         "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
     )
