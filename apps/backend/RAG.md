@@ -52,33 +52,85 @@ Each question is scored on:
 4. **refusal behaviour** (`full`) — unanswerable questions must produce the
    exact refusal sentence, answerable ones must not.
 
-## Baseline (2026-10-31, `open-mistral-nemo`)
+## Baseline (before Phase 3.3, 2026-10-31, `open-mistral-nemo`)
 
-`--mode retrieval`: hit rate **1.00**, context recall **0.96** (10 chunks, top-k 5).
-`--mode full`: hit rate **1.00**, answer recall **0.875**, refusals **1/1**.
+`--mode retrieval`: hit rate **1.00**, context recall **0.963** (10 chunks,
+top-k 5).
+
+`--mode full`: hit rate **1.00**, context recall **0.963**, answer recall
+**0.875**, refusals **1/1**, one unexpected refusal.
 
 One real failure the harness caught:
 
 - `refunds` — *"How many days do I have to request a refund?"* → the model
-  answers *"I could not find the answer in the document."* even though the
-  correct chunk (`p. 3`: "Refunds are issued within 14 days of purchase") is the
-  first context block and the page-3 citation is correct.
-- The same context answers *"What is the refund window?"* correctly. So this is
-  a wording/paraphrase limitation of `open-mistral-nemo`, not retrieval and not
-  prompt-copying; adding "answer if the context states it differently" to the
-  system prompt did not fix it.
+  answered *"I could not find the answer in the document."* even though the
+  correct chunk (`p. 3`: "Refunds are issued within 14 days of purchase") was
+  the first context block and the page-3 citation was correct.
+- The same context answered *"What is the refund window?"* correctly, so this
+  was a generation-time paraphrase/refusal limitation of `open-mistral-nemo`,
+  not retrieval.
 
-Because `--max-unexpected-refusals` defaults to `0`, the full eval currently
-exits `1`. That is intentional: it is the baseline Phase 3.3 (query rewriting /
-model choice) has to beat. Until then, use
-`--max-unexpected-refusals 1` to track changes without failing on this known
-issue.
+## After Phase 3.3 (2026-10-31, `open-mistral-nemo`)
+
+| Metric | Before | After |
+|---|---:|---:|
+| Retrieval hit rate | 1.000 | 1.000 |
+| Context keyword recall | 0.963 | 0.963 |
+| Answer keyword recall | 0.875 | **1.000** |
+| Unexpected refusals (answerable) | 1 (`refunds`) | **0** |
+| Expected refusals (unanswerable) | 1/1 | 1/1 |
+
+Both modes exit `0` with the default thresholds. Reproduce with:
+
+```bash
+.venv/bin/python scripts/rag_eval.py --mode retrieval
+.venv/bin/python scripts/rag_eval.py --mode full --json /tmp/rag-eval.json
+```
+
+### What changed
+
+- **Generation-time refusal fix (the actual refunds fix).** The system prompt
+  now says a fact may be paraphrased and asks the model to *silently identify
+  the supporting sentence before answering*; it refuses only when no sentence
+  supports an answer. This is deliberately a prompt change, not a retrieval
+  change: the correct chunk was already first in the context. The earlier
+  "context may phrase things differently" sentence alone did **not** fix it.
+- **Query rewriting** (`app/services/query_rewrite.py`). Recent user turns plus
+  the current question are rewritten into one standalone retrieval query with
+  the chat model. The call is best-effort: errors, timeouts
+  (`RAG_QUERY_REWRITE_TIMEOUT`, default 6 s) and empty output fall back to
+  today's deterministic concatenation. `RAG_QUERY_REWRITE=false` disables it.
+  The extra call is skipped when there is no useful history (no prior user turn
+  with at least two content terms) **and** the question is concrete: at least
+  two content terms, no follow-up prefix (`and`, `what about`, ...), and no
+  pronoun in the first four tokens. That keeps single-turn eval and most
+  production questions on the cheap path.
+- **Hybrid retrieval** (`app/services/retrieval.py`). A pure similarity search
+  fetches `max(2 × RAG_RETRIEVAL_FETCH_K, 20)` candidates. Duplicate chunks are
+  removed by `document_id/page/chunk`, then BM25 scores the candidate pool.
+  Dense and lexical rankings are fused with reciprocal rank fusion (RRF,
+  `RAG_RETRIEVAL_RRF_K`, default 60) and the fused pool is reranked with
+  normalised BM25, fused score, query-term coverage, phrase/proximity evidence
+  and a small dense-rank prior before the final top-k. MMR was replaced because
+  RRF needs a meaningful dense rank, and the lexical signal already supplies
+  the diversity MMR was approximating.
+- `RAG_RETRIEVAL_TOP_K`, `RAG_RETRIEVAL_FETCH_K`, source labels, citations and
+  SSE event shapes are unchanged.
+
+### Known measurement artifact
+
+`team-plan` still shows context recall **0.667** even though the page-2 chunk is
+retrieved and cited and the answer recall is **1.0**. The PDF line-wraps
+"shared\nworkspaces", so the keyword matcher does not see the exact string
+"shared workspaces". This is a scorer/PDF-layout artifact, not a retrieval
+regression; the golden set was left untouched.
 
 ## What to measure next
 
-- After 3.3 (query rewrite + hybrid retrieval), `answer_keyword_recall` and
-  `unexpected_refusals` are the two numbers that matter.
 - Add questions against a real-world PDF (scanned one too) before trusting the
   scores: the synthetic doc is intentionally clean.
+- Add a multi-turn case so query rewriting is scored directly; the current
+  golden set is single-turn and therefore exercises the rewrite *fallback/skip*
+  path, not the rewrite itself.
 - Keep the golden set small enough to run in under a minute; grow it with cases
   that have actually failed in production.
