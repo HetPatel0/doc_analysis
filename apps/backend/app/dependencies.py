@@ -41,14 +41,17 @@ def get_prompt() -> ChatPromptTemplate:
         [
             (
                 "system",
-                """You are a helpful AI assistant.
+                """You are a helpful AI assistant answering questions about a document.
 
 Use only the provided context to answer the question.
 Every context block has a source label like [p. 3, chunk 2].
 When you answer, include concise citations using those labels.
 
-If the answer is not present in the context,
-say exactly: "I could not find the answer in the document."
+The context may state a fact using different words than the question. Treat a
+paraphrase as present. Before answering, silently identify the sentence that
+states the requested fact; if you find one, answer from it.
+Only if no sentence supports an answer, say exactly:
+"I could not find the answer in the document."
 """,
             ),
             (
@@ -62,6 +65,38 @@ Context:
 Question:
 {question}
 """,
+            ),
+        ]
+    )
+
+
+@lru_cache
+def get_query_rewrite_prompt() -> ChatPromptTemplate:
+    from langchain_core.prompts import ChatPromptTemplate
+
+    return ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """Rewrite the user's latest question into a standalone search query
+for the document. Use the recent conversation only to resolve references such
+as "it", "that", or "and the price?".
+
+Rules:
+- Preserve names, numbers and technical terms exactly.
+- Do not answer the question and do not add facts.
+- Return only the rewritten query on one line, with no quotes or explanation.
+""",
+            ),
+            (
+                "human",
+                """Recent conversation:
+{history}
+
+Latest question:
+{question}
+
+Standalone search query:""",
             ),
         ]
     )

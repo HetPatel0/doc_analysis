@@ -98,3 +98,86 @@ def test_source_footer_added_only_when_missing():
         == "I could not find the answer in the document."
     )
     assert r.with_source_footer("answer", []) == "answer"
+
+
+def test_tokenize_stems_and_drops_stopwords():
+    # "how" and "were" are stopwords; plurals/past tense are stemmed.
+    assert r.tokenize("How many refunds were requested?") == [
+        "many",
+        "refund",
+        "request",
+    ]
+    assert "the" not in r.tokenize("the notes")
+    assert r.tokenize("notes") == ["note"]
+
+
+def test_bm25_rewards_rarer_terms_and_saturates_frequency():
+    corpus = [
+        r.tokenize("refund refund refund refund"),
+        r.tokenize("refund policy covers the purchase window"),
+        r.tokenize("unrelated support hours"),
+    ]
+    scores = r.BM25(corpus).scores(r.tokenize("refund policy"))
+    assert scores[1] > scores[0]
+    assert scores[2] == 0
+
+
+def test_dedupe_documents_keeps_best_dense_occurrence():
+    first = doc("refund text", page=3, chunk=2)
+    duplicate = doc("refund text", page=3, chunk=2)
+    other = doc("refund text", page=4, chunk=5)
+    assert r.dedupe_documents([first, duplicate, other]) == [first, other]
+
+
+def test_dedupe_documents_falls_back_to_normalised_text():
+    first = doc("Refund   text")
+    duplicate = doc("refund text")
+    assert r.dedupe_documents([first, duplicate]) == [first]
+
+
+def test_rerank_prefers_phrase_and_coverage_over_raw_term_count():
+    docs = [
+        doc("refund " * 20, page=1),
+        doc("the refund policy covers the purchase window", page=2),
+        doc("nothing relevant", page=3),
+    ]
+    ranked = r.rerank_documents(docs, "refund policy", limit=2)
+    assert ranked[0].metadata["page_number"] == 2
+
+
+def test_rerank_keeps_dense_order_when_no_lexical_match():
+    docs = [doc("alpha", page=1), doc("beta", page=2), doc("gamma", page=3)]
+    ranked = r.rerank_documents(docs, "zzzz", limit=3)
+    assert [d.metadata["page_number"] for d in ranked] == [1, 2, 3]
+
+
+def test_rerank_handles_empty_candidates_and_zero_limit():
+    assert r.rerank_documents([], "anything", limit=5) == []
+    assert r.rerank_documents([doc("alpha", page=1)], "alpha", limit=0) == []
+
+
+def test_is_concrete_question_rejects_follow_ups_and_pronouns():
+    assert r.is_concrete_question("What are the support hours?") is True
+    assert r.is_concrete_question("What is the refund window?") is True
+    assert r.is_concrete_question("and the price?") is False
+    assert r.is_concrete_question("What about that?") is False
+    assert r.is_concrete_question("How is it encrypted?") is False
+
+
+def test_should_rewrite_skips_call_for_concrete_question_without_history():
+    request = ChatRequest(document_id="doc", message="What are the support hours?")
+    assert r.useful_history([]) is False
+    assert r.should_rewrite_query(request) is False
+
+
+def test_should_rewrite_follow_up_without_history_or_any_question_with_history():
+    follow_up = ChatRequest(document_id="doc", message="and the price?")
+    assert r.should_rewrite_query(follow_up) is True
+
+    with_history = ChatRequest(
+        document_id="doc",
+        message="What are the support hours?",
+        history=[{"role": "user", "content": "tell me about the Team plan"}],
+    )
+    assert r.useful_history(with_history.history) is True
+    assert r.should_rewrite_query(with_history) is True

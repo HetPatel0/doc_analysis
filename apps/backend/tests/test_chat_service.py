@@ -64,16 +64,15 @@ def test_retrieve_reranks_and_builds_citations(fake_store, monkeypatch):
     assert citations == [{"label": "p. 3, chunk 3", "page": 3, "chunk": 3}]
 
 
-def test_retrieve_uses_mmr_with_configured_k(fake_store, monkeypatch):
+def test_retrieve_fetches_a_similarity_candidate_pool(fake_store, monkeypatch):
     fake_store.docs = []
     monkeypatch.setattr(chat_service.settings, "retrieval_fetch_k", 7)
 
-    chat_service.retrieve(ChatRequest(document_id="doc", message="hello"))
+    chat_service.retrieve(ChatRequest(document_id="doc", message="hello there"))
 
     kwargs = FakeVectorStore.last_retriever_kwargs
-    assert kwargs["search_type"] == "mmr"
-    assert kwargs["search_kwargs"]["k"] == 7
-    assert kwargs["search_kwargs"]["fetch_k"] >= 20
+    assert kwargs["search_type"] == "similarity"
+    assert kwargs["search_kwargs"]["k"] >= 20
 
 
 def test_prepare_chat_builds_prompt_with_history(fake_store, monkeypatch):
