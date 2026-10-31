@@ -36,3 +36,5 @@ class DocumentStatusResponse(BaseModel):
     key_points: list[str] = Field(default_factory=list)
     action_items: list[str] = Field(default_factory=list)
     quiz: list[QuizQuestion] = Field(default_factory=list)
+    ocr_used: bool = False
+    ocr_provider: str | None = None
