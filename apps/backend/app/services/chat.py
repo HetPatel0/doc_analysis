@@ -5,11 +5,15 @@ from typing import Any
 from app import dependencies as deps
 from app.config import settings
 from app.schemas import ChatRequest
-from app.services import documents, retrieval
+from app.services import documents, query_rewrite, retrieval
 
 
 def retrieve(request: ChatRequest) -> tuple[list[Any], list[dict[str, Any]]]:
-    """Vector search + rerank for one chat turn.
+    """Hybrid retrieval for one chat turn.
+
+    Dense search fetches a candidate pool, BM25 scores that pool, and the fused
+    result is reranked down to the final top-k. Query rewriting is best-effort:
+    it falls back to the deterministic query on any error or timeout.
 
     Returns the documents actually put in the prompt and their structured
     citations. Kept separate from prompt building so the eval harness and tests
@@ -24,19 +28,22 @@ def retrieve(request: ChatRequest) -> tuple[list[Any], list[dict[str, Any]]]:
         embedding_function=deps.get_embedding_model(),
     )
 
-    retrieval_query = retrieval.build_retrieval_query(request)
+    retrieval_query = query_rewrite.rewrite_query(request)
+    # Pure similarity keeps a meaningful dense rank for reciprocal rank fusion.
+    # MMR's diversity objective is now handled by the lexical signal + dedupe,
+    # and MMR cannot expose the ranking RRF needs.
+    candidate_k = max(settings.retrieval_fetch_k * 2, 20)
     retriever = vector_store.as_retriever(
-        search_type="mmr",
-        search_kwargs={
-            "k": settings.retrieval_fetch_k,
-            "fetch_k": max(settings.retrieval_fetch_k * 2, 20),
-            "lambda_mult": 0.5,
-        },
+        search_type="similarity",
+        search_kwargs={"k": candidate_k},
     )
 
     retrieved_docs = retriever.invoke(retrieval_query)
     docs = retrieval.rerank_documents(
-        retrieved_docs, retrieval_query, settings.retrieval_top_k
+        retrieved_docs,
+        retrieval_query,
+        settings.retrieval_top_k,
+        rrf_k=settings.retrieval_rrf_k,
     )
     return docs, retrieval.build_citations(docs)
 

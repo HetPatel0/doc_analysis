@@ -37,6 +37,16 @@ class Settings:
     min_chunk_chars: int = 80
     retrieval_fetch_k: int = int(os.getenv("RAG_RETRIEVAL_FETCH_K", "16"))
     retrieval_top_k: int = int(os.getenv("RAG_RETRIEVAL_TOP_K", "5"))
+    # Hybrid retrieval: fuse dense candidates with BM25, then rerank. RRF's
+    # rank constant; 60 is the value from the original RRF paper.
+    retrieval_rrf_k: int = int(os.getenv("RAG_RETRIEVAL_RRF_K", "60"))
+
+    # Query rewriting for multi-turn retrieval. Off -> always use the
+    # deterministic concatenation of recent user turns + current question.
+    query_rewrite: bool = _flag("RAG_QUERY_REWRITE", "true")
+    query_rewrite_timeout_seconds: float = float(
+        os.getenv("RAG_QUERY_REWRITE_TIMEOUT", "6")
+    )
 
     # OCR fallback for scanned PDFs (no text layer).
     # auto  -> try local tesseract, then Mistral OCR, then fail with a clear error
