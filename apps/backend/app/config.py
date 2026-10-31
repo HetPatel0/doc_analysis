@@ -38,6 +38,19 @@ class Settings:
     retrieval_fetch_k: int = int(os.getenv("RAG_RETRIEVAL_FETCH_K", "16"))
     retrieval_top_k: int = int(os.getenv("RAG_RETRIEVAL_TOP_K", "5"))
 
+    # OCR fallback for scanned PDFs (no text layer).
+    # auto  -> try local tesseract, then Mistral OCR, then fail with a clear error
+    # off   -> never OCR (scans fail as before)
+    ocr_provider: str = os.getenv("OCR_PROVIDER", "auto").lower()
+    ocr_min_chars_per_page: int = int(os.getenv("OCR_MIN_CHARS_PER_PAGE", "100"))
+    ocr_max_pages: int = int(os.getenv("OCR_MAX_PAGES", "40"))
+    ocr_model: str = os.getenv("OCR_MODEL", "mistral-ocr-latest")
+    ocr_lang: str = os.getenv("OCR_LANG", "eng")
+    ocr_dpi: int = int(os.getenv("OCR_DPI", "200"))
+    ocr_timeout_seconds: int = int(os.getenv("OCR_TIMEOUT_SECONDS", "120"))
+
+    mistral_api_key: str = os.getenv("MISTRAL_API_KEY", "")
+
     mistral_model: str = os.getenv("MISTRAL_MODEL", "open-mistral-nemo")
     cors_origins: list[str] = _csv(
         "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"

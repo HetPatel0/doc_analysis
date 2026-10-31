@@ -3,7 +3,8 @@
 > Ordered by impact / risk. Do Phase 0-1 first, Phase 2-3 next, Phase 4 later.
 > Stack: `apps/frontend` (Next.js 16 + Better-Auth + Drizzle + Neon) + `apps/backend` (FastAPI + LangChain + Chroma + Mistral).
 >
-> Status: Phases 0, 1, and 2 are implemented. Phase 3 is next.
+> Status: Phases 0, 1, 2, and 2.5 are done. In Phase 3, OCR (3.2) and the eval
+> harness (3.5) are done; hybrid retrieval + query rewriting (3.3) is next.
 
 ## Current pain points (why this order)
 
@@ -54,18 +55,35 @@ Removes the "one PDF at a time" ceiling.
 | 2.3 | Side-by-side PDF viewer (`react-pdf`) + click citation → jump to page | Citations are `p. X` strings today, not actionable | `components/pdf-viewer.tsx`, `format_context` in `main.py:198` |
 | 2.4 | Auto-summary / action-items / quiz on upload complete | High demo value, cheap (one extra LLM call) | `main.py`, chat route |
 
+## Phase 2.5 — Measurable + deployable (done)
+
+Inserted before Phase 3: without a harness and a working start command, every
+retrieval change is a guess.
+
+| # | Task | Status |
+|---|------|--------|
+| 2.5.1 | Offline pytest suite for retrieval, uploads, auth, indexing, OCR, chat streaming (56 tests) | ✅ |
+| 2.5.2 | Golden-set RAG eval (`scripts/rag_eval.py`) with hit-rate/keyword/refusal scoring | ✅ |
+| 2.5.3 | CI: backend `ruff` + `pytest`, frontend `tsc` + `eslint` + `build`; manual eval workflow | ✅ |
+| 2.5.4 | Deploy audit + fix: broken `start_prod.sh`, env matrix, volume/state requirements, OCR packages | ✅ |
+
+Baseline recorded in `apps/backend/RAG.md`: hit rate 1.0, answer recall 0.875,
+one real paraphrase refusal (model limitation, targets 3.3).
+
 ## Phase 3 — RAG quality + scale (FOURTH, ~2 weeks)
 
 Do after UX, because better retrieval is invisible if chat UX is poor.
+Order changed after the eval baseline: measure, fix hard failures (OCR), then
+retrieval tuning, then storage scale.
 
 | # | Task | Why later | Touches |
 |---|------|-----------|---------|
-| 3.1 | Migrate Chroma FS → `pgvector` on Neon | Railway volume + per-doc Chroma dirs won't scale; you already pay for Neon | `main.py`, `requirements.txt`, `drizzle/` |
-| 3.2 | OCR fallback: scanned PDF → `unstructured` / Mistral OCR when `loader.load()` is empty | `PyPDFLoader` returns nothing on scans → `failed` today | `index_pdf` in `main.py:284` |
-| 3.3 | Hybrid retrieval: BM25 + vector + rerank, query-rewrite with history | Current `rerank_documents` is naive term-count | `main.py:237` |
-| 3.4 | Chunking experiments: semantic splitter option, expose `RAG_*` in Railway env | Hardcoded `900/120` | `main.py:31` |
-| 3.5 | Evals: golden PDF + Q/A set, `pytest` RAG regression | Prevents silent quality drops | `apps/backend/tests/` (new) |
-| 3.6 | Support DOCX/TXT/MD + URL import | PDF-only limits adoption | `document_loaders/` |
+| 3.1 | Migrate Chroma FS → `pgvector` on Neon | Railway volume + per-doc Chroma dirs won't scale; you already pay for Neon | `app/services/*`, `requirements.txt`, `drizzle/` |
+| 3.2 | OCR fallback: scanned PDF → Mistral OCR, then tesseract | `PyPDFLoader` returns nothing on scans → `failed` before | ✅ `app/services/ocr.py` |
+| 3.3 | Hybrid retrieval: BM25 + vector + rerank, query-rewrite with history | Naive term-count rerank; eval baseline fails a paraphrase question | `app/services/retrieval.py`, `chat.py` |
+| 3.4 | Chunking experiments: semantic splitter option | Env knobs exist (`RAG_CHUNK_*`); no semantic splitter yet | `app/services/documents.py` |
+| 3.5 | Evals: golden PDF + Q/A set, `pytest` RAG regression | Prevents silent quality drops | ✅ `tests/`, `scripts/rag_eval.py` |
+| 3.6 | Support DOCX/TXT/MD + URL import | PDF-only limits adoption | `app/services/documents.py` |
 
 ## Phase 4 — Growth / monetization (LAST)
 
@@ -85,7 +103,8 @@ Week 1:  0.1 → 0.2 → 0.3 → 0.4 → 0.5
 Week 2:  1.1 → 1.2 → 1.3
 Week 3:  1.4 → 1.5 → 0.6 (refactor while adding sidebar)
 Week 4+: 2.1 → 2.2 → 2.3 → 2.4
-Later:   3.1 → 3.2 → 3.3 → 4.1
+Done:    2.5 → 3.2 → 3.5
+Next:    3.3 → 3.1 → 3.4 → 3.6 → 4.1
 ```
 
 ## What NOT to do yet

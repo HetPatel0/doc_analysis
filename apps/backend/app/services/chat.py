@@ -8,10 +8,13 @@ from app.schemas import ChatRequest
 from app.services import documents, retrieval
 
 
-def prepare_chat(
-    request: ChatRequest,
-) -> tuple[Any, list[str], list[dict[str, Any]]]:
-    """Run retrieval and build the final prompt (shared by /chat + /chat/stream)."""
+def retrieve(request: ChatRequest) -> tuple[list[Any], list[dict[str, Any]]]:
+    """Vector search + rerank for one chat turn.
+
+    Returns the documents actually put in the prompt and their structured
+    citations. Kept separate from prompt building so the eval harness and tests
+    can score retrieval without an LLM call.
+    """
     from langchain_community.vectorstores import Chroma
 
     vectorstore_path = documents.ensure_document_exists(request.document_id)
@@ -35,8 +38,15 @@ def prepare_chat(
     docs = retrieval.rerank_documents(
         retrieved_docs, retrieval_query, settings.retrieval_top_k
     )
+    return docs, retrieval.build_citations(docs)
+
+
+def prepare_chat(
+    request: ChatRequest,
+) -> tuple[Any, list[str], list[dict[str, Any]]]:
+    """Run retrieval and build the final prompt (shared by /chat + /chat/stream)."""
+    docs, citations = retrieve(request)
     context, sources = retrieval.format_context(docs)
-    citations = retrieval.build_citations(docs)
 
     final_prompt = deps.get_prompt().invoke(
         {

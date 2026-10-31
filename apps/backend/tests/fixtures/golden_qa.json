@@ -1,0 +1,62 @@
+{
+  "name": "nimbus-notes",
+  "description": "Golden retrieval/answer set for Bookify RAG regression checks.",
+  "pdf": "nimbus-notes.pdf",
+  "questions": [
+    {
+      "id": "company",
+      "question": "Who built Nimbus Notes and when was the company founded?",
+      "expected_keywords": ["Wren Labs", "2019"],
+      "expected_page": 1
+    },
+    {
+      "id": "starter-plan",
+      "question": "How much does the Starter plan cost and how much storage does it include?",
+      "expected_keywords": ["9", "5 gigabytes"],
+      "expected_page": 2
+    },
+    {
+      "id": "team-plan",
+      "question": "What does the Team plan add compared to the Starter plan?",
+      "expected_keywords": ["shared workspaces", "version history", "priority support"],
+      "expected_page": 2
+    },
+    {
+      "id": "support-hours",
+      "question": "What are the support hours?",
+      "expected_keywords": ["9 AM", "6 PM", "Monday"],
+      "expected_page": 3
+    },
+    {
+      "id": "refunds",
+      "question": "How many days do I have to request a refund?",
+      "expected_keywords": ["14 days"],
+      "expected_page": 3
+    },
+    {
+      "id": "encryption",
+      "question": "How are notes encrypted at rest?",
+      "expected_keywords": ["AES-256"],
+      "expected_page": 4
+    },
+    {
+      "id": "rate-limit",
+      "question": "What is the default API rate limit?",
+      "expected_keywords": ["120 requests per minute"],
+      "expected_page": 7
+    },
+    {
+      "id": "trash-retention",
+      "question": "How long are deleted notes recoverable from the trash?",
+      "expected_keywords": ["30 days"],
+      "expected_page": 10
+    },
+    {
+      "id": "unanswerable",
+      "question": "What is the annual salary of the chief executive officer?",
+      "expected_keywords": [],
+      "expected_page": null,
+      "expected_refusal": true
+    }
+  ]
+}

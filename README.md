@@ -153,7 +153,7 @@ which makes Vercel preview and production domains safer to support.
 
 ```env
 MISTRAL_API_KEY=...
-MISTRAL_MODEL=mistral-small-2506
+MISTRAL_MODEL=open-mistral-nemo
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 BOOKIFY_API_SECRET=...
 BOOKIFY_MAX_UPLOAD_MB=20
@@ -161,6 +161,9 @@ BOOKIFY_STORAGE_DIR=
 BOOKIFY_UPLOADS_DIR=
 BOOKIFY_VECTORSTORES_DIR=
 BOOKIFY_WARM_ON_STARTUP=true
+OCR_PROVIDER=auto
+OCR_MIN_CHARS_PER_PAGE=100
+OCR_MAX_PAGES=40
 SENTRY_DSN=
 SENTRY_ENVIRONMENT=production
 SENTRY_TRACES_SAMPLE_RATE=0.1
@@ -173,12 +176,15 @@ Required backend keys:
 
 Recommended backend keys:
 
-- `MISTRAL_MODEL`: Mistral chat model. Defaults to `mistral-small-2506`.
+- `MISTRAL_MODEL`: Mistral chat model. Defaults to `open-mistral-nemo` (`mistral-small`/`mistral-medium` return a zero per-minute rate limit on the current plan).
 - `CORS_ORIGINS`: Comma-separated frontend origins allowed by FastAPI CORS.
 - `BOOKIFY_STORAGE_DIR`: Base storage directory for uploads and vector indexes.
 - `BOOKIFY_UPLOADS_DIR`: Upload storage directory. Defaults under `BOOKIFY_STORAGE_DIR`.
 - `BOOKIFY_VECTORSTORES_DIR`: Vector index storage directory. Defaults under `BOOKIFY_STORAGE_DIR`.
-- `BOOKIFY_WARM_ON_STARTUP`: Whether to warm dependencies on startup.
+- `BOOKIFY_WARM_ON_STARTUP`: Whether to warm dependencies on startup. Set `false` on Railway so health checks pass quickly.
+- `OCR_PROVIDER`: OCR fallback for scanned PDFs: `auto` (local tesseract, then Mistral OCR), `mistral`, `tesseract`, or `off`.
+- `OCR_MIN_CHARS_PER_PAGE`: Text-density threshold below which a page is treated as a scan. Default `100`.
+- `OCR_MAX_PAGES`: Safety/cost cap on OCR pages. Default `40`.
 - `SENTRY_DSN`: Optional Sentry DSN for backend error reporting. Leave blank to disable.
 - `SENTRY_ENVIRONMENT`: Sentry environment name. Defaults to `production`.
 - `SENTRY_TRACES_SAMPLE_RATE`: Sentry performance sample rate. Defaults to `0.1`.
@@ -186,6 +192,38 @@ Recommended backend keys:
 If `BOOKIFY_STORAGE_DIR` is set, the backend will store uploads and vector
 indexes under that directory by default. On Railway, point this at your mounted
 volume path.
+
+## Tests, lint, and RAG evals
+
+Backend (offline, no API key needed):
+
+```bash
+cd apps/backend
+pip install -r requirements.txt -r requirements-dev.txt
+ruff check .
+pytest -q
+```
+
+Frontend:
+
+```bash
+cd apps/frontend
+npx tsc --noEmit
+npm run lint
+npm run build
+```
+
+Retrieval quality against the golden document (needs `MISTRAL_API_KEY`):
+
+```bash
+cd apps/backend
+.venv/bin/python scripts/rag_eval.py                 # retrieval only
+.venv/bin/python scripts/rag_eval.py --mode full     # answers + citations
+```
+
+See [apps/backend/RAG.md](apps/backend/RAG.md) for the golden set, scoring, and
+the current baseline. CI runs the offline checks on every push and PR
+(`.github/workflows/ci.yml`); the eval is a manual workflow.
 
 ## Deployment Notes
 
@@ -222,17 +260,21 @@ SENTRY_AUTH_TOKEN=
 - Start command: `bash ./start_prod.sh`
 - Expose the service publicly
 - Add a persistent volume and point storage env vars at it
+- Keep `BOOKIFY_WARM_ON_STARTUP=false` so the health check does not wait on model warm-up
+- Full matrix and checklist: [DEPLOY.md](DEPLOY.md)
 
 Recommended production values:
 
 ```env
 MISTRAL_API_KEY=...
-MISTRAL_MODEL=mistral-small-2506
+MISTRAL_MODEL=open-mistral-nemo
 CORS_ORIGINS=https://your-app.vercel.app
 BOOKIFY_STORAGE_DIR=/app/data
 BOOKIFY_UPLOADS_DIR=/app/data/uploads
 BOOKIFY_VECTORSTORES_DIR=/app/data/vectorstores
-BOOKIFY_WARM_ON_STARTUP=true
+BOOKIFY_WARM_ON_STARTUP=false
+OCR_PROVIDER=auto
+OCR_MAX_PAGES=40
 SENTRY_DSN=
 SENTRY_ENVIRONMENT=production
 SENTRY_TRACES_SAMPLE_RATE=0.1

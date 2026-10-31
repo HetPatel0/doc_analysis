@@ -11,7 +11,7 @@ from app import dependencies as deps
 from app.config import settings
 from app.observability import capture_exception
 from app.schemas import DocumentStatusResponse
-from app.services import insights, retrieval
+from app.services import insights, ocr, retrieval
 
 
 def get_vectorstore_path(document_id: str) -> Path:
@@ -41,6 +41,8 @@ def write_document_status(
     key_points: list[str] | None = None,
     action_items: list[str] | None = None,
     quiz: list[dict[str, str]] | None = None,
+    ocr_used: bool = False,
+    ocr_provider: str | None = None,
 ) -> None:
     get_document_status_path(document_id).write_text(
         json.dumps(
@@ -54,6 +56,8 @@ def write_document_status(
                 "key_points": key_points or [],
                 "action_items": action_items or [],
                 "quiz": quiz or [],
+                "ocr_used": ocr_used,
+                "ocr_provider": ocr_provider,
             }
         ),
         encoding="utf-8",
@@ -103,15 +107,33 @@ def delete_document_files(document_id: str) -> None:
             upload_path.unlink()
 
 
+def _load_text_pages(upload_path: Path) -> tuple[list, int]:
+    """Return pages that have a text layer plus the total page count."""
+    PyPDFLoader, _, _ = deps.get_indexing_dependencies()
+    try:
+        pages = PyPDFLoader(str(upload_path)).load()
+    except Exception:
+        # A corrupt/odd PDF can still be readable by OCR.
+        return [], 0
+    return [doc for doc in pages if doc.page_content.strip()], len(pages)
+
+
 def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
     write_document_status(document_id, file_name=file_name, status="indexing")
 
     try:
-        PyPDFLoader, Chroma, RecursiveCharacterTextSplitter = (
-            deps.get_indexing_dependencies()
-        )
-        loader = PyPDFLoader(str(upload_path))
-        docs = [doc for doc in loader.load() if doc.page_content.strip()]
+        _, Chroma, RecursiveCharacterTextSplitter = deps.get_indexing_dependencies()
+
+        docs, page_count = _load_text_pages(upload_path)
+        ocr_used = False
+        ocr_provider = None
+
+        if settings.ocr_provider != "off" and ocr.needs_ocr(docs, page_count):
+            result = ocr.ocr_pdf(upload_path, file_name)
+            if result.chars > sum(len(doc.page_content.strip()) for doc in docs):
+                docs = result.documents
+                ocr_used = True
+                ocr_provider = result.provider
 
         if not docs:
             raise ValueError("The PDF did not contain readable pages.")
@@ -158,6 +180,8 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
             file_name=file_name,
             status="ready",
             chunks_indexed=len(chunks),
+            ocr_used=ocr_used,
+            ocr_provider=ocr_provider,
             **document_insights,
         )
     except Exception as exc:

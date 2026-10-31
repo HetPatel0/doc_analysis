@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from app.config import settings
 
 if TYPE_CHECKING:
-    from langchain_community.vectorstores import Chroma
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 
@@ -21,21 +20,21 @@ def get_indexing_dependencies() -> tuple[type, type, type]:
 
 
 @lru_cache
-def get_embedding_model() -> "MistralAIEmbeddings":
+def get_embedding_model() -> MistralAIEmbeddings:
     from langchain_mistralai import MistralAIEmbeddings
 
     return MistralAIEmbeddings()
 
 
 @lru_cache
-def get_llm() -> "ChatMistralAI":
+def get_llm() -> ChatMistralAI:
     from langchain_mistralai import ChatMistralAI
 
     return ChatMistralAI(model_name=settings.mistral_model)
 
 
 @lru_cache
-def get_prompt() -> "ChatPromptTemplate":
+def get_prompt() -> ChatPromptTemplate:
     from langchain_core.prompts import ChatPromptTemplate
 
     return ChatPromptTemplate.from_messages(

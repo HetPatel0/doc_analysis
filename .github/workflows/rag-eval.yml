@@ -1,0 +1,53 @@
+name: RAG eval
+
+# Manual only: it calls real embedding/LLM endpoints and costs tokens.
+# Add MISTRAL_API_KEY as a repository secret before running.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "retrieval (no LLM answers) or full (answers + citations)"
+        type: choice
+        options: [retrieval, full]
+        default: retrieval
+      min_hit_rate:
+        description: "Minimum retrieval hit rate"
+        default: "0.8"
+      min_keyword_recall:
+        description: "Minimum context/answer keyword recall"
+        default: "0.6"
+
+jobs:
+  eval:
+    name: Golden set (${{ inputs.mode }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: apps/backend/requirements*.txt
+
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run golden-set eval
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: |
+          python scripts/rag_eval.py \
+            --mode "${{ inputs.mode }}" \
+            --min-hit-rate "${{ inputs.min_hit_rate }}" \
+            --min-keyword-recall "${{ inputs.min_keyword_recall }}" \
+            --json rag-eval.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rag-eval-${{ inputs.mode }}
+          path: apps/backend/rag-eval.json
