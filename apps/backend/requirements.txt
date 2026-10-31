@@ -12,16 +12,9 @@ mistralai==2.4.4
 
 chromadb==1.5.8
 
-# Embedding Models
-
-sentence-transformers==2.2.2
-
-# Document Loaders dependencies
+# Document loading (OCR fallback uses Mistral OCR or tesseract binaries)
 
 pypdf==6.10.2
-unstructured==0.22.26
-beautifulsoup4==4.14.3
-lxml==6.1.0
 
 # Text Processing
 

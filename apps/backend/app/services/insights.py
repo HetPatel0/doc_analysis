@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from app import dependencies as deps
 from app.observability import capture_exception
@@ -133,7 +134,7 @@ def generate_insights(chunks: Iterable[Any]) -> dict[str, Any]:
         content = response.content
         raw = content if isinstance(content, str) else str(content)
         payload = _parse_json(raw)
-    except Exception as exc:  # noqa: BLE001 - insights must never fail indexing
+    except Exception as exc:  # insights must never fail indexing
         capture_exception(exc)
         return dict(EMPTY_INSIGHTS)
 
