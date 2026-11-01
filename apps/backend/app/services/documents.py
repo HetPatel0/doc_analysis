@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 import shutil
 from pathlib import Path
@@ -12,14 +11,12 @@ from app.config import settings
 from app.observability import capture_exception
 from app.schemas import DocumentStatusResponse
 from app.services import insights, ocr, retrieval
+from app.services.store import get_store
 
 
-def get_vectorstore_path(document_id: str) -> Path:
+def get_legacy_vectorstore_path(document_id: str) -> Path:
+    """Pre-3.1 Chroma directory, kept only so deletes can clean up old data."""
     return settings.vectorstores_dir / document_id
-
-
-def get_document_status_path(document_id: str) -> Path:
-    return settings.vectorstores_dir / f"{document_id}.json"
 
 
 def sanitize_file_name(raw_name: str | None) -> str:
@@ -44,23 +41,18 @@ def write_document_status(
     ocr_used: bool = False,
     ocr_provider: str | None = None,
 ) -> None:
-    get_document_status_path(document_id).write_text(
-        json.dumps(
-            {
-                "document_id": document_id,
-                "file_name": file_name,
-                "status": status,
-                "chunks_indexed": chunks_indexed,
-                "error": error,
-                "summary": summary,
-                "key_points": key_points or [],
-                "action_items": action_items or [],
-                "quiz": quiz or [],
-                "ocr_used": ocr_used,
-                "ocr_provider": ocr_provider,
-            }
-        ),
-        encoding="utf-8",
+    get_store().write_status(
+        document_id,
+        file_name=file_name,
+        status=status,
+        chunks_indexed=chunks_indexed,
+        error=error,
+        summary=summary,
+        key_points=key_points,
+        action_items=action_items,
+        quiz=quiz,
+        ocr_used=ocr_used,
+        ocr_provider=ocr_provider,
     )
 
 
@@ -72,15 +64,13 @@ def find_uploaded_file(document_id: str) -> Path | None:
 
 
 def read_document_status(document_id: str) -> DocumentStatusResponse:
-    status_path = get_document_status_path(document_id)
-    if not status_path.exists():
+    record = get_store().read_status(document_id)
+    if record is None:
         raise HTTPException(status_code=404, detail="Document not found.")
-    return DocumentStatusResponse.model_validate_json(
-        status_path.read_text(encoding="utf-8")
-    )
+    return DocumentStatusResponse.model_validate(record)
 
 
-def ensure_document_exists(document_id: str) -> Path:
+def ensure_document_exists(document_id: str) -> None:
     status = read_document_status(document_id)
     if status.status == "failed":
         raise HTTPException(
@@ -91,17 +81,16 @@ def ensure_document_exists(document_id: str) -> Path:
             status_code=409, detail="Document is still being indexed."
         )
 
-    vectorstore_path = get_vectorstore_path(document_id)
-    if not vectorstore_path.exists():
+    if get_store().count_chunks(document_id) == 0:
         raise HTTPException(status_code=404, detail="Document index not found.")
-    return vectorstore_path
 
 
 def delete_document_files(document_id: str) -> None:
-    shutil.rmtree(get_vectorstore_path(document_id), ignore_errors=True)
-    status_path = get_document_status_path(document_id)
-    if status_path.exists():
-        status_path.unlink()
+    get_store().delete_document(document_id)
+    shutil.rmtree(get_legacy_vectorstore_path(document_id), ignore_errors=True)
+    legacy_status = settings.vectorstores_dir / f"{document_id}.json"
+    if legacy_status.exists():
+        legacy_status.unlink()
     for upload_path in settings.uploads_dir.glob(f"{document_id}-*"):
         if upload_path.is_file():
             upload_path.unlink()
@@ -109,7 +98,7 @@ def delete_document_files(document_id: str) -> None:
 
 def _load_text_pages(upload_path: Path) -> tuple[list, int]:
     """Return pages that have a text layer plus the total page count."""
-    PyPDFLoader, _, _ = deps.get_indexing_dependencies()
+    PyPDFLoader, _ = deps.get_indexing_dependencies()
     try:
         pages = PyPDFLoader(str(upload_path)).load()
     except Exception:
@@ -118,11 +107,24 @@ def _load_text_pages(upload_path: Path) -> tuple[list, int]:
     return [doc for doc in pages if doc.page_content.strip()], len(pages)
 
 
+def _embed_chunks(texts: list[str]) -> list[list[float]]:
+    embedding_model = deps.get_embedding_model()
+    batch_size = max(1, settings.embedding_batch_size)
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), batch_size):
+        vectors.extend(embedding_model.embed_documents(texts[start : start + batch_size]))
+    if len(vectors) != len(texts):
+        raise ValueError(
+            f"expected {len(texts)} embeddings, the provider returned {len(vectors)}"
+        )
+    return vectors
+
+
 def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
     write_document_status(document_id, file_name=file_name, status="indexing")
 
     try:
-        _, Chroma, RecursiveCharacterTextSplitter = deps.get_indexing_dependencies()
+        _, Splitter = deps.get_indexing_dependencies()
 
         docs, page_count = _load_text_pages(upload_path)
         ocr_used = False
@@ -138,7 +140,7 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
         if not docs:
             raise ValueError("The PDF did not contain readable pages.")
 
-        splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        splitter = Splitter.from_tiktoken_encoder(
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap,
             add_start_index=True,
@@ -167,11 +169,8 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
                 }
             )
 
-        Chroma.from_documents(
-            documents=chunks,
-            embedding=deps.get_embedding_model(),
-            persist_directory=str(get_vectorstore_path(document_id)),
-        )
+        embeddings = _embed_chunks([chunk.page_content for chunk in chunks])
+        get_store().replace_chunks(document_id, chunks, embeddings)
 
         document_insights = insights.generate_insights(chunks)
 

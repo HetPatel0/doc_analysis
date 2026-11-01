@@ -1,59 +1,51 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import ClassVar
 
 import pytest
 from app.schemas import ChatRequest
 from app.services import chat as chat_service
+from app.services import store as rag_store
 from langchain_core.documents import Document
 
 
-class FakeRetriever:
-    def __init__(self, docs):
-        self.docs = docs
-        self.queries: list[str] = []
+class FakeEmbeddings:
+    """Deterministic query vector; seeded chunk vectors are chosen to match."""
 
-    def invoke(self, query):
-        self.queries.append(query)
-        return self.docs
+    def embed_query(self, text):
+        return [1.0, 0.0]
 
 
-class FakeVectorStore:
-    docs: ClassVar[list[Document]] = []
-    last_retriever_kwargs: ClassVar[dict | None] = None
-
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-
-    def as_retriever(self, **kwargs):
-        type(self).last_retriever_kwargs = kwargs
-        return FakeRetriever(list(self.docs))
+def seed(docs: list[Document]) -> None:
+    """Store chunks so the first document is the nearest neighbour."""
+    vectors = [[1.0, 0.0] if index == 0 else [0.0, 1.0] for index in range(len(docs))]
+    rag_store.get_store().replace_chunks("doc", docs, vectors)
 
 
 @pytest.fixture
 def fake_store(monkeypatch):
-    import langchain_community.vectorstores
-
-    monkeypatch.setattr(langchain_community.vectorstores, "Chroma", FakeVectorStore)
     monkeypatch.setattr(
-        chat_service.documents,
-        "ensure_document_exists",
-        lambda document_id: Path("/tmp/does-not-need-to-exist"),
+        chat_service.deps, "get_embedding_model", lambda: FakeEmbeddings()
     )
-    monkeypatch.setattr(chat_service.deps, "get_embedding_model", lambda: "embed")
-    return FakeVectorStore
+    monkeypatch.setattr(
+        chat_service.documents, "ensure_document_exists", lambda document_id: None
+    )
+    return rag_store.get_store()
 
 
 def test_retrieve_reranks_and_builds_citations(fake_store, monkeypatch):
-    fake_store.docs = [
-        Document(page_content="unrelated", metadata={"page_number": 1, "chunk_index": 0}),
-        Document(
-            page_content="The refund window is 14 days.",
-            metadata={"page_number": 3, "chunk_index": 2},
-        ),
-    ]
+    seed(
+        [
+            Document(
+                page_content="unrelated",
+                metadata={"page_number": 1, "chunk_index": 0},
+            ),
+            Document(
+                page_content="The refund window is 14 days.",
+                metadata={"page_number": 3, "chunk_index": 2},
+            ),
+        ]
+    )
     monkeypatch.setattr(chat_service.settings, "retrieval_top_k", 1)
 
     request = ChatRequest(document_id="doc", message="refund window")
@@ -65,20 +57,30 @@ def test_retrieve_reranks_and_builds_citations(fake_store, monkeypatch):
 
 
 def test_retrieve_fetches_a_similarity_candidate_pool(fake_store, monkeypatch):
-    fake_store.docs = []
+    calls: dict = {}
+    original = fake_store.similarity_search
+
+    def spy(document_id, query_embedding, k):
+        calls["k"] = k
+        return original(document_id, query_embedding, k)
+
+    monkeypatch.setattr(fake_store, "similarity_search", spy)
     monkeypatch.setattr(chat_service.settings, "retrieval_fetch_k", 7)
 
     chat_service.retrieve(ChatRequest(document_id="doc", message="hello there"))
 
-    kwargs = FakeVectorStore.last_retriever_kwargs
-    assert kwargs["search_type"] == "similarity"
-    assert kwargs["search_kwargs"]["k"] >= 20
+    assert calls["k"] >= 20
 
 
 def test_prepare_chat_builds_prompt_with_history(fake_store, monkeypatch):
-    fake_store.docs = [
-        Document(page_content="Starter costs 9 USD.", metadata={"page_number": 2})
-    ]
+    seed(
+        [
+            Document(
+                page_content="Starter costs 9 USD.",
+                metadata={"page_number": 2, "chunk_index": 1},
+            )
+        ]
+    )
     captured = {}
 
     class FakePrompt:
@@ -95,10 +97,10 @@ def test_prepare_chat_builds_prompt_with_history(fake_store, monkeypatch):
     )
     prompt, sources, citations = chat_service.prepare_chat(request)
 
-    assert prompt["rendered"]["context"].startswith("[p. 2]")
+    assert prompt["rendered"]["context"].startswith("[p. 2")
     assert "User: hi" in captured["history"]
     assert captured["question"] == "how much is starter?"
-    assert sources == ["p. 2"]
+    assert sources == ["p. 2, chunk 2"]
     assert citations[0]["page"] == 2
 
 

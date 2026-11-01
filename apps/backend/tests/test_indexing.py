@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from typing import ClassVar
 
 from app.services import documents, insights, ocr
+from app.services.store import get_store
 from langchain_core.documents import Document
 
 
@@ -32,16 +32,14 @@ class FakeSplitter:
         return chunks
 
 
-class FakeChroma:
-    captured: ClassVar[dict] = {}
+class FakeEmbeddings:
+    """Deterministic 2-d embeddings; the memory store never checks dimensions."""
 
-    @classmethod
-    def from_documents(cls, documents, embedding, persist_directory):
-        cls.captured = {
-            "documents": documents,
-            "embedding": embedding,
-            "persist_directory": persist_directory,
-        }
+    embedded_batches: ClassVar[list[list[str]]] = []
+
+    def embed_documents(self, texts):
+        type(self).embedded_batches.append(list(texts))
+        return [[float(len(text)), float(index)] for index, text in enumerate(texts)]
 
 
 def install_fake_indexing(monkeypatch, pages: list[str], *, loader_error=None):
@@ -57,20 +55,28 @@ def install_fake_indexing(monkeypatch, pages: list[str], *, loader_error=None):
                 for index, text in enumerate(pages)
             ]
 
-    FakeChroma.captured = {}
+    FakeEmbeddings.embedded_batches = []
     monkeypatch.setattr(
         documents.deps,
         "get_indexing_dependencies",
-        lambda: (Loader, FakeChroma, FakeSplitter),
+        lambda: (Loader, FakeSplitter),
     )
-    monkeypatch.setattr(documents.deps, "get_embedding_model", lambda: "fake-embed")
     monkeypatch.setattr(
-        documents.insights, "generate_insights", lambda chunks: dict(insights.EMPTY_INSIGHTS)
+        documents.deps, "get_embedding_model", lambda: FakeEmbeddings()
+    )
+    monkeypatch.setattr(
+        documents.insights,
+        "generate_insights",
+        lambda chunks: dict(insights.EMPTY_INSIGHTS),
     )
 
 
 def status(document_id: str) -> dict:
-    return json.loads(documents.get_document_status_path(document_id).read_text())
+    return get_store().read_status(document_id)
+
+
+def chunks(document_id: str) -> list[Document]:
+    return [doc for doc, _ in get_store().chunks[document_id]]
 
 
 def test_text_pdf_indexes_and_records_metadata(monkeypatch, tmp_path):
@@ -89,14 +95,14 @@ def test_text_pdf_indexes_and_records_metadata(monkeypatch, tmp_path):
     assert result["ocr_provider"] is None
     assert ocr_calls == []
 
-    chunks = FakeChroma.captured["documents"]
-    assert result["chunks_indexed"] == len(chunks)
-    assert chunks[0].metadata["document_id"] == "doc1"
-    assert chunks[0].metadata["file_name"] == "doc.pdf"
-    assert [c.metadata["chunk_index"] for c in chunks] == list(range(len(chunks)))
-    assert [c.metadata["page_number"] for c in chunks] == [1, 1, 2, 2]
-    assert chunks[0].metadata["source_label"] == "p. 1, chunk 1"
-    assert FakeChroma.captured["persist_directory"].endswith("doc1")
+    indexed = chunks("doc1")
+    assert result["chunks_indexed"] == len(indexed)
+    assert indexed[0].metadata["document_id"] == "doc1"
+    assert indexed[0].metadata["file_name"] == "doc.pdf"
+    assert [c.metadata["chunk_index"] for c in indexed] == list(range(len(indexed)))
+    assert [c.metadata["page_number"] for c in indexed] == [1, 1, 2, 2]
+    assert indexed[0].metadata["source_label"] == "p. 1, chunk 1"
+    assert get_store().count_chunks("doc1") == len(indexed)
 
 
 def test_scanned_pdf_falls_back_to_ocr(monkeypatch, tmp_path):
@@ -122,7 +128,7 @@ def test_scanned_pdf_falls_back_to_ocr(monkeypatch, tmp_path):
     assert result["ocr_used"] is True
     assert result["ocr_provider"] == "tesseract"
     assert result["chunks_indexed"] >= 1
-    assert FakeChroma.captured["documents"][0].metadata["page_number"] == 1
+    assert chunks("doc2")[0].metadata["page_number"] == 1
 
 
 def test_ocr_text_is_ignored_when_thinner_than_text_layer(monkeypatch, tmp_path):
@@ -143,7 +149,7 @@ def test_ocr_text_is_ignored_when_thinner_than_text_layer(monkeypatch, tmp_path)
     result = status("doc3")
     assert result["status"] == "ready"
     assert result["ocr_used"] is False
-    assert FakeChroma.captured["documents"][0].page_content.startswith("CCC")
+    assert chunks("doc3")[0].page_content.startswith("CCC")
 
 
 def test_ocr_unavailable_marks_document_failed(monkeypatch, tmp_path):
@@ -231,3 +237,19 @@ def test_large_page_is_split_into_multiple_chunks(monkeypatch, tmp_path):
     documents.index_pdf("doc8", "long.pdf", upload)
 
     assert status("doc8")["chunks_indexed"] > 1
+
+
+def test_chunks_are_embedded_in_batches(monkeypatch, tmp_path):
+    from app.config import settings
+
+    install_fake_indexing(monkeypatch, ["A" * 900])
+    monkeypatch.setattr(settings, "embedding_batch_size", 1)
+
+    upload = tmp_path / "batch.pdf"
+    upload.write_bytes(b"%PDF-1.4")
+    documents.index_pdf("doc9", "batch.pdf", upload)
+
+    embedded = sum(len(batch) for batch in FakeEmbeddings.embedded_batches)
+    assert len(FakeEmbeddings.embedded_batches) > 1
+    assert all(len(batch) == 1 for batch in FakeEmbeddings.embedded_batches)
+    assert get_store().count_chunks("doc9") == embedded

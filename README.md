@@ -157,6 +157,10 @@ MISTRAL_MODEL=open-mistral-nemo
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 BOOKIFY_API_SECRET=...
 BOOKIFY_MAX_UPLOAD_MB=20
+DATABASE_URL=postgresql://...  # same Neon database as the frontend
+BOOKIFY_STORE=postgres
+RAG_EMBEDDING_DIM=1024
+RAG_EMBEDDING_BATCH_SIZE=64
 BOOKIFY_STORAGE_DIR=
 BOOKIFY_UPLOADS_DIR=
 BOOKIFY_VECTORSTORES_DIR=
@@ -172,15 +176,19 @@ SENTRY_TRACES_SAMPLE_RATE=0.1
 Required backend keys:
 
 - `MISTRAL_API_KEY`: Mistral API key used for embeddings and chat generation.
+- `DATABASE_URL`: Neon Postgres connection string (the same database the frontend uses). The backend creates its `document_index`/`document_chunk` tables and the `vector` extension on first use.
 - `BOOKIFY_API_SECRET`: Shared secret the frontend sends as `X-Bookify-Secret`. Leave empty only for local dev without auth; always set in production.
 
 Recommended backend keys:
 
 - `MISTRAL_MODEL`: Mistral chat model. Defaults to `open-mistral-nemo` (`mistral-small`/`mistral-medium` return a zero per-minute rate limit on the current plan).
 - `CORS_ORIGINS`: Comma-separated frontend origins allowed by FastAPI CORS.
-- `BOOKIFY_STORAGE_DIR`: Base storage directory for uploads and vector indexes.
+- `BOOKIFY_STORAGE_DIR`: Base storage directory for uploads.
 - `BOOKIFY_UPLOADS_DIR`: Upload storage directory. Defaults under `BOOKIFY_STORAGE_DIR`.
-- `BOOKIFY_VECTORSTORES_DIR`: Vector index storage directory. Defaults under `BOOKIFY_STORAGE_DIR`.
+- `BOOKIFY_VECTORSTORES_DIR`: Legacy Chroma directory; only cleaned up on delete since Phase 3.1.
+- `BOOKIFY_STORE`: `postgres` (default) or `memory` for a DB-less local run.
+- `RAG_EMBEDDING_DIM`: Embedding size, default 1024 (`mistral-embed`). Changing it needs a reindex.
+- `RAG_EMBEDDING_BATCH_SIZE`: Chunks per embedding call, default 64.
 - `BOOKIFY_WARM_ON_STARTUP`: Whether to warm dependencies on startup. Set `false` on Railway so health checks pass quickly.
 - `OCR_PROVIDER`: OCR fallback for scanned PDFs: `auto` (local tesseract, then Mistral OCR), `mistral`, `tesseract`, or `off`.
 - `OCR_MIN_CHARS_PER_PAGE`: Text-density threshold below which a page is treated as a scan. Default `100`.
@@ -213,12 +221,22 @@ npm run lint
 npm run build
 ```
 
-Retrieval quality against the golden document (needs `MISTRAL_API_KEY`):
+Retrieval quality against the golden document (needs `MISTRAL_API_KEY` and `DATABASE_URL`):
 
 ```bash
 cd apps/backend
 .venv/bin/python scripts/rag_eval.py                 # retrieval only
 .venv/bin/python scripts/rag_eval.py --mode full     # answers + citations
+```
+
+The eval indexes the golden PDF as a temporary `rag-eval` document and removes
+those rows afterwards. Documents uploaded before Phase 3.1 can be moved into the
+pgvector store without re-uploading:
+
+```bash
+cd apps/backend
+.venv/bin/python scripts/reindex_documents.py --dry-run
+.venv/bin/python scripts/reindex_documents.py
 ```
 
 See [apps/backend/RAG.md](apps/backend/RAG.md) for the golden set, scoring, and

@@ -11,12 +11,11 @@ if TYPE_CHECKING:
 
 
 @lru_cache
-def get_indexing_dependencies() -> tuple[type, type, type]:
+def get_indexing_dependencies() -> tuple[type, type]:
     from langchain_community.document_loaders import PyPDFLoader
-    from langchain_community.vectorstores import Chroma
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-    return PyPDFLoader, Chroma, RecursiveCharacterTextSplitter
+    return PyPDFLoader, RecursiveCharacterTextSplitter
 
 
 @lru_cache

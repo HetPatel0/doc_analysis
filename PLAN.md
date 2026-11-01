@@ -1,11 +1,11 @@
 # Bookify — Upgrade & Feature Plan
 
 > Ordered by impact / risk. Do Phase 0-1 first, Phase 2-3 next, Phase 4 later.
-> Stack: `apps/frontend` (Next.js 16 + Better-Auth + Drizzle + Neon) + `apps/backend` (FastAPI + LangChain + Chroma + Mistral).
+> Stack: `apps/frontend` (Next.js 16 + Better-Auth + Drizzle + Neon) + `apps/backend` (FastAPI + LangChain + pgvector + Mistral).
 >
-> Status: Phases 0, 1, 2, and 2.5 are done. In Phase 3, OCR (3.2), hybrid
-> retrieval + query rewriting (3.3), and the eval harness (3.5) are done; storage
-> scaling (3.1) and chunking (3.4) are next.
+> Status: Phases 0, 1, 2, and 2.5 are done. In Phase 3, OCR (3.2), pgvector
+> storage (3.1), hybrid retrieval + query rewriting (3.3), and the eval harness
+> (3.5) are done; chunking (3.4) and extra formats (3.6) are next.
 
 ## Current pain points (why this order)
 
@@ -79,7 +79,7 @@ retrieval tuning, then storage scale.
 
 | # | Task | Why later | Touches |
 |---|------|-----------|---------|
-| 3.1 | Migrate Chroma FS → `pgvector` on Neon | Railway volume + per-doc Chroma dirs won't scale; you already pay for Neon | `app/services/*`, `requirements.txt`, `drizzle/` |
+| 3.1 | Migrate Chroma FS → `pgvector` on Neon | Railway volume + per-doc Chroma dirs won't scale; you already pay for Neon | ✅ `app/services/store.py`, `documents.py`, `chat.py` |
 | 3.2 | OCR fallback: scanned PDF → Mistral OCR, then tesseract | `PyPDFLoader` returns nothing on scans → `failed` before | ✅ `app/services/ocr.py` |
 | 3.3 | Hybrid retrieval: BM25 + vector + rerank, query-rewrite with history | Naive term-count rerank; eval baseline fails a paraphrase question | ✅ `app/services/retrieval.py`, `query_rewrite.py`, `chat.py` |
 | 3.4 | Chunking experiments: semantic splitter option | Env knobs exist (`RAG_CHUNK_*`); no semantic splitter yet | `app/services/documents.py` |
@@ -104,8 +104,8 @@ Week 1:  0.1 → 0.2 → 0.3 → 0.4 → 0.5
 Week 2:  1.1 → 1.2 → 1.3
 Week 3:  1.4 → 1.5 → 0.6 (refactor while adding sidebar)
 Week 4+: 2.1 → 2.2 → 2.3 → 2.4
-Done:    2.5 → 3.2 → 3.5 → 3.3
-Next:    3.1 → 3.4 → 3.6 → 4.1
+Done:    2.5 → 3.2 → 3.5 → 3.3 → 3.1
+Next:    3.4 → 3.6 → 4.1
 ```
 
 ## What NOT to do yet

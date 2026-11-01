@@ -17,6 +17,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 sys.path.insert(0, str(BACKEND_ROOT / "tests"))
 
 from app.config import settings  # noqa: E402
+from app.services import store as rag_store  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +28,10 @@ def isolated_storage(tmp_path, monkeypatch):
     vectorstores.mkdir()
     monkeypatch.setattr(settings, "uploads_dir", uploads)
     monkeypatch.setattr(settings, "vectorstores_dir", vectorstores)
+    # The suite never touches Postgres: every test gets a fresh memory store.
+    rag_store.set_store(rag_store.MemoryStore())
     yield {"uploads": uploads, "vectorstores": vectorstores}
+    rag_store.set_store(None)
 
 
 @pytest.fixture

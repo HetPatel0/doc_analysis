@@ -6,6 +6,7 @@ from app import dependencies as deps
 from app.config import settings
 from app.schemas import ChatRequest
 from app.services import documents, query_rewrite, retrieval
+from app.services.store import get_store
 
 
 def retrieve(request: ChatRequest) -> tuple[list[Any], list[dict[str, Any]]]:
@@ -31,26 +32,18 @@ def retrieve_with_query(
     The eval harness uses the query to record whether the rewrite actually ran
     instead of silently scoring the deterministic fallback.
     """
-    from langchain_community.vectorstores import Chroma
-
-    vectorstore_path = documents.ensure_document_exists(request.document_id)
-
-    vector_store = Chroma(
-        persist_directory=str(vectorstore_path),
-        embedding_function=deps.get_embedding_model(),
-    )
+    documents.ensure_document_exists(request.document_id)
 
     retrieval_query = query_rewrite.rewrite_query(request)
     # Pure similarity keeps a meaningful dense rank for reciprocal rank fusion.
     # MMR's diversity objective is now handled by the lexical signal + dedupe,
     # and MMR cannot expose the ranking RRF needs.
     candidate_k = max(settings.retrieval_fetch_k * 2, 20)
-    retriever = vector_store.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": candidate_k},
+    query_embedding = deps.get_embedding_model().embed_query(retrieval_query)
+    retrieved_docs = get_store().similarity_search(
+        request.document_id, query_embedding, candidate_k
     )
 
-    retrieved_docs = retriever.invoke(retrieval_query)
     docs = retrieval.rerank_documents(
         retrieved_docs,
         retrieval_query,

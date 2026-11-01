@@ -41,6 +41,14 @@ class Settings:
     # rank constant; 60 is the value from the original RRF paper.
     retrieval_rrf_k: int = int(os.getenv("RAG_RETRIEVAL_RRF_K", "60"))
 
+    # Vector storage. Postgres + pgvector (Neon) is the production store;
+    # "memory" keeps everything in-process for tests and DB-less local runs.
+    database_url: str = os.getenv("DATABASE_URL", "")
+    store_backend: str = os.getenv("BOOKIFY_STORE", "postgres").lower()
+    # mistral-embed returns 1024 floats; changing the model needs a reindex.
+    embedding_dim: int = int(os.getenv("RAG_EMBEDDING_DIM", "1024"))
+    embedding_batch_size: int = int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", "64"))
+
     # Query rewriting for multi-turn retrieval. Off -> always use the
     # deterministic concatenation of recent user turns + current question.
     query_rewrite: bool = _flag("RAG_QUERY_REWRITE", "true")
