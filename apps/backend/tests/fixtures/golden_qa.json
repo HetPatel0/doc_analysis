@@ -22,6 +22,32 @@
       "expected_page": 2
     },
     {
+      "id": "team-plan-followup",
+      "question": "How much version history does it include?",
+      "history": [
+        { "role": "user", "content": "Tell me about the Team plan." },
+        {
+          "role": "assistant",
+          "content": "The Team plan costs 29 USD per user per month and adds shared workspaces, version history, and priority support."
+        }
+      ],
+      "expected_keywords": ["12 months"],
+      "expected_page": 2
+    },
+    {
+      "id": "api-limit-followup",
+      "question": "What is the default?",
+      "history": [
+        { "role": "user", "content": "Does Nimbus Notes have a developer API?" },
+        {
+          "role": "assistant",
+          "content": "Yes. The REST API uses OAuth2 for workspace installs and personal API keys for scripts."
+        }
+      ],
+      "expected_keywords": ["120 requests per minute"],
+      "expected_page": 7
+    },
+    {
       "id": "support-hours",
       "question": "What are the support hours?",
       "expected_keywords": ["9 AM", "6 PM", "Monday"],
