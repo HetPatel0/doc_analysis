@@ -8,9 +8,10 @@ langchain-text-splitters==1.1.2
 langchain-mistralai==1.1.3
 mistralai==2.4.4
 
-# Vector Database
+# Vector Database (Postgres + pgvector on Neon)
 
-chromadb==1.5.8
+psycopg[binary]==3.3.6
+pgvector==0.5.1
 
 # Document loading (OCR fallback uses Mistral OCR or tesseract binaries)
 

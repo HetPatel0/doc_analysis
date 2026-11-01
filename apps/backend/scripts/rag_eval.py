@@ -80,9 +80,14 @@ def keyword_recall(text: str, keywords: list[str]) -> float:
 
 
 def setup(args: argparse.Namespace) -> tuple[Any, dict[str, Any]]:
-    """Index the golden PDF into a temp storage dir and load the QA set."""
+    """Index the golden PDF and load the QA set.
+
+    With the pgvector store the golden document lives in Postgres, so the
+    ``rag-eval`` rows are deleted before and after each run.
+    """
     from app.config import settings
     from app.services import documents, insights
+    from app.services.store import get_store
 
     if args.top_k is not None:
         settings.retrieval_top_k = args.top_k
@@ -93,6 +98,8 @@ def setup(args: argparse.Namespace) -> tuple[Any, dict[str, Any]]:
     if args.mode == "retrieval":
         # Skip the insights LLM call: it costs tokens and is not being scored.
         insights.generate_insights = lambda chunks: dict(insights.EMPTY_INSIGHTS)
+
+    get_store().delete_document("rag-eval")
 
     upload_path = settings.uploads_dir / f"eval-{args.pdf.name}"
     upload_path.write_bytes(pdf_bytes)
@@ -105,12 +112,13 @@ def setup(args: argparse.Namespace) -> tuple[Any, dict[str, Any]]:
     if status.status != "ready":
         raise SystemExit(
             f"indexing failed ({status.status}): {status.error}\n"
-            "Check MISTRAL_API_KEY and the PDF fixture."
+            "Check MISTRAL_API_KEY, DATABASE_URL and the PDF fixture."
         )
 
     meta = {
         "artifact": args.pdf.name,
         "mode": args.mode,
+        "store": type(get_store()).__name__,
         "chunks": status.chunks_indexed,
         "ocr_used": status.ocr_used,
         "index_seconds": index_seconds,
@@ -310,6 +318,13 @@ def main() -> int:
         except Exception as exc:  # network/quota/API problems
             print(f"eval failed: {exc}", file=sys.stderr)
             return 2
+        finally:
+            try:
+                from app.services.store import get_store
+
+                get_store().delete_document("rag-eval")
+            except Exception:  # no DB configured: nothing to clean up
+                pass
 
 
 if __name__ == "__main__":
