@@ -41,8 +41,8 @@ Flags worth knowing:
 
 - `tests/fixtures/nimbus-notes.pdf` — 10-page synthetic product handbook.
   Regenerate with `.venv/bin/python scripts/make_golden_pdf.py`.
-- `tests/fixtures/golden_qa.json` — 9 questions: 8 answerable with an expected
-  page and keywords, 1 intentionally unanswerable to check refusals.
+- `tests/fixtures/golden_qa.json` — 11 questions: 10 answerable (2 of them
+  multi-turn with `history`) and 1 intentionally unanswerable to check refusals.
 
 Each question is scored on:
 
@@ -51,6 +51,15 @@ Each question is scored on:
 3. **answer keyword recall** (`full`) — are the facts in the answer?
 4. **refusal behaviour** (`full`) — unanswerable questions must produce the
    exact refusal sentence, answerable ones must not.
+
+Keyword matching lowercases and collapses whitespace on both sides before
+comparing. PDF text keeps hard line breaks (`"shared\nworkspaces"`), so the old
+raw-substring matcher scored a correctly retrieved phrase as a miss.
+
+Multi-turn entries carry a `history` list and go through the same
+`ChatRequest` the app receives, so query rewriting is exercised for real. The
+harness reports `rewrites_used` and a per-question `rewrite` column: `yes` means
+the model rewrote the query, `no` means the deterministic query was used.
 
 ## Baseline (before Phase 3.3, 2026-10-31, `open-mistral-nemo`)
 
@@ -117,20 +126,49 @@ Both modes exit `0` with the default thresholds. Reproduce with:
 - `RAG_RETRIEVAL_TOP_K`, `RAG_RETRIEVAL_FETCH_K`, source labels, citations and
   SSE event shapes are unchanged.
 
-### Known measurement artifact
+### Known measurement artifact (fixed 2026-11-01)
 
-`team-plan` still shows context recall **0.667** even though the page-2 chunk is
-retrieved and cited and the answer recall is **1.0**. The PDF line-wraps
-"shared\nworkspaces", so the keyword matcher does not see the exact string
-"shared workspaces". This is a scorer/PDF-layout artifact, not a retrieval
-regression; the golden set was left untouched.
+`team-plan` used to show context recall **0.667** even though the page-2 chunk
+was retrieved and cited and the answer recall was **1.0**. The PDF line-wraps
+"shared\nworkspaces", so the old raw-substring keyword matcher did not see the
+phrase. The scorer now collapses whitespace before matching; the golden set was
+left untouched.
+
+## Harness fixes (2026-11-01, `open-mistral-nemo`)
+
+| Metric | After 3.3 | After harness fix |
+|---|---:|---:|
+| Retrieval hit rate | 1.000 | 1.000 |
+| Context keyword recall | 0.963 | **1.000** |
+| Answer keyword recall | 1.000 | 1.000 |
+| Unexpected refusals | 0 | 0 |
+| Expected refusals | 1/1 | 1/1 |
+| Questions / multi-turn | 9 / 0 | 11 / 2 |
+| Rewrites actually used | 0 | 2 |
+
+Changes:
+
+- `keyword_recall` normalises whitespace and case on both the text and the
+  expected keyword (`scripts/rag_eval.py`). This fixes the `team-plan` artifact
+  above without editing the golden set.
+- Golden-set entries may include `history`. The harness builds the same
+  `ChatRequest` the API receives and formats that history into the answer
+  prompt, so the query-rewrite path is covered end to end (2 new multi-turn
+  cases: `team-plan-followup`, `api-limit-followup`).
+- `chat_service.retrieve_with_query` returns the query that was searched;
+  `retrieve` keeps its old signature. The harness records `rewrite_used` per
+  question and `rewrites_used` in the summary, so a silent fallback to the
+  deterministic query is visible instead of invisible.
+- `tests/test_rag_eval.py` pins the normalisation, the request/history plumbing
+  and the "multi-turn triggers rewrite, concrete single-turn does not" heuristic.
 
 ## What to measure next
 
 - Add questions against a real-world PDF (scanned one too) before trusting the
   scores: the synthetic doc is intentionally clean.
-- Add a multi-turn case so query rewriting is scored directly; the current
-  golden set is single-turn and therefore exercises the rewrite *fallback/skip*
-  path, not the rewrite itself.
+- The two multi-turn cases prove the rewrite call runs and is scored, not that
+  it beats the fallback: the synthetic document is lexically unambiguous, so
+  the raw question often retrieves the right page anyway. A harder corpus is
+  needed to measure rewrite *lift*.
 - Keep the golden set small enough to run in under a minute; grow it with cases
   that have actually failed in production.
