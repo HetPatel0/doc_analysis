@@ -61,11 +61,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def normalize_for_match(text: str) -> str:
+    """Lowercase and collapse whitespace so PDF line-wraps do not hide a phrase.
+
+    `pypdf` keeps hard line breaks, so a phrase like "shared workspaces" arrives
+    as "shared\\nworkspaces". Matching on the raw string scored that chunk as a
+    miss even though the text was retrieved and cited.
+    """
+    return " ".join(text.lower().split())
+
+
 def keyword_recall(text: str, keywords: list[str]) -> float:
     if not keywords:
         return 1.0
-    haystack = text.lower()
-    hits = sum(1 for keyword in keywords if keyword.lower() in haystack)
+    haystack = normalize_for_match(text)
+    hits = sum(1 for keyword in keywords if normalize_for_match(keyword) in haystack)
     return hits / len(keywords)
 
 
@@ -153,10 +163,24 @@ def score_question(
     return row
 
 
+def build_chat_request(item: dict[str, Any]):
+    """Turn one golden-set entry into the request the app would receive.
+
+    An entry may carry `history` (previous user/assistant turns) so multi-turn
+    query rewriting is exercised instead of only its single-turn skip path.
+    """
+    from app.schemas import ChatRequest
+
+    return ChatRequest(
+        document_id="rag-eval",
+        message=item["question"],
+        history=item.get("history", []),
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     from app import dependencies as deps
     from app.config import settings
-    from app.schemas import ChatRequest
     from app.services import chat as chat_service
     from app.services import retrieval
     from langchain_mistralai import ChatMistralAI
@@ -169,18 +193,25 @@ def run(args: argparse.Namespace) -> int:
     rows: list[dict[str, Any]] = []
 
     for item in questions:
-        request = ChatRequest(document_id="rag-eval", message=item["question"])
-        docs, citations = chat_service.retrieve(request)
+        request = build_chat_request(item)
+        docs, citations, retrieval_query = chat_service.retrieve_with_query(request)
 
         answer = None
         if args.mode == "full":
             context, _ = retrieval.format_context(docs)
             prompt = deps.get_prompt().invoke(
-                {"context": context, "history": "No previous conversation.", "question": item["question"]}
+                {
+                    "context": context,
+                    "history": retrieval.format_history(request.history),
+                    "question": request.message,
+                }
             )
             answer = llm.invoke(prompt).content
 
         row = score_question(item, docs, citations, answer)
+        row["turns"] = len(request.history) + 1
+        row["retrieval_query"] = retrieval_query
+        row["rewrite_used"] = retrieval_query != retrieval.build_retrieval_query(request)
         rows.append(row)
         if args.verbose:
             print(f"  {row['id']}: {row}")
@@ -192,6 +223,8 @@ def run(args: argparse.Namespace) -> int:
     summary = {
         **meta,
         "questions": len(rows),
+        "multi_turn_questions": sum(1 for row in rows if row["turns"] > 1),
+        "rewrites_used": sum(1 for row in rows if row["rewrite_used"]),
         "hit_rate": round(hit_rate, 3),
         "context_keyword_recall": round(recall, 3),
         "min_hit_rate": args.min_hit_rate,
@@ -223,15 +256,21 @@ def run(args: argparse.Namespace) -> int:
     summary["passed"] = not failed
 
     width = max(len(row["id"]) for row in rows) + 2
-    print(f"\n{'question':<{width}} {'page':>5} {'hit':>5} {'ctx recall':>10}")
+    print(
+        f"\n{'question':<{width}} {'page':>5} {'hit':>5} "
+        f"{'ctx recall':>10} {'rewrite':>8}"
+    )
     for row in rows:
         hit = "-" if row["hit"] is None else ("yes" if row["hit"] else "NO")
         print(
             f"{row['id']:<{width}} {row['expected_page']!s:>5} {hit:>5} "
-            f"{row['context_keyword_recall']:>10.2f}"
+            f"{row['context_keyword_recall']:>10.2f} "
+            f"{('yes' if row['rewrite_used'] else 'no'):>8}"
         )
         if args.mode == "full" and row.get("answer") is not None:
             print(f"    answer: {row['answer'][:160].replace(chr(10), ' ')}")
+        if args.verbose and row["rewrite_used"]:
+            print(f"    query: {row['retrieval_query']}")
 
     print("\nsummary:")
     for key, value in summary.items():

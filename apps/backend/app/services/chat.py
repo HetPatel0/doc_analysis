@@ -19,6 +19,18 @@ def retrieve(request: ChatRequest) -> tuple[list[Any], list[dict[str, Any]]]:
     citations. Kept separate from prompt building so the eval harness and tests
     can score retrieval without an LLM call.
     """
+    docs, citations, _ = retrieve_with_query(request)
+    return docs, citations
+
+
+def retrieve_with_query(
+    request: ChatRequest,
+) -> tuple[list[Any], list[dict[str, Any]], str]:
+    """Like :func:`retrieve`, but also returns the query that was searched.
+
+    The eval harness uses the query to record whether the rewrite actually ran
+    instead of silently scoring the deterministic fallback.
+    """
     from langchain_community.vectorstores import Chroma
 
     vectorstore_path = documents.ensure_document_exists(request.document_id)
@@ -45,7 +57,7 @@ def retrieve(request: ChatRequest) -> tuple[list[Any], list[dict[str, Any]]]:
         settings.retrieval_top_k,
         rrf_k=settings.retrieval_rrf_k,
     )
-    return docs, retrieval.build_citations(docs)
+    return docs, retrieval.build_citations(docs), retrieval_query
 
 
 def prepare_chat(
