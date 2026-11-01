@@ -2,12 +2,12 @@
 
 The unit tests in `tests/` are offline and deterministic. Retrieval quality is
 measured separately by `scripts/rag_eval.py`, which runs the real pipeline
-(Mistral embeddings, Chroma, the configured chat model) against a fixed
+(Mistral embeddings, pgvector, the configured chat model) against a fixed
 document with known answers.
 
 ## Run it
 
-From `apps/backend`, with `MISTRAL_API_KEY` set:
+From `apps/backend`, with `MISTRAL_API_KEY` and `DATABASE_URL` set:
 
 ```bash
 # Retrieval only: no LLM answers, cheapest, fastest
@@ -22,8 +22,10 @@ From `apps/backend`, with `MISTRAL_API_KEY` set:
 ```
 
 Exit codes: `0` thresholds met, `1` regression, `2` setup/API problem. Only the
-golden PDF is indexed, into a temporary directory — your real documents are
-never touched.
+golden PDF is indexed, into the pgvector store as document `rag-eval`; those
+rows are deleted before and after the run, so your real documents are never
+touched. `BOOKIFY_STORE=memory` runs the same eval without a database (it does
+not exercise the SQL path).
 
 Flags worth knowing:
 
@@ -125,6 +127,19 @@ Both modes exit `0` with the default thresholds. Reproduce with:
   the diversity MMR was approximating.
 - `RAG_RETRIEVAL_TOP_K`, `RAG_RETRIEVAL_FETCH_K`, source labels, citations and
   SSE event shapes are unchanged.
+
+### Store (Phase 3.1)
+
+Chunks and document status now live in Postgres instead of per-document Chroma
+directories: `document_index` (status, chunk count, insights) and
+`document_chunk` (`vector(1024)` embedding + HNSW cosine index), created lazily
+by `app/services/store.py`. Retrieval is unchanged above the store — cosine
+candidate pool, then BM25/RRF fusion and the multi-signal rerank.
+
+The numbers below were reproduced on both the in-memory store and
+`PostgresStore`; `--mode retrieval` and `--mode full` both exit `0` against
+pgvector. Documents uploaded before 3.1 are re-indexed with
+`scripts/reindex_documents.py`.
 
 ### Known measurement artifact (fixed 2026-11-01)
 
