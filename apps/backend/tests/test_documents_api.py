@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 from app.config import settings
 from app.services import documents
@@ -69,19 +67,13 @@ def test_status_unknown_document_is_404(client):
     assert client.get("/documents/nope").status_code == 404
 
 
-def test_status_reads_legacy_json_without_ocr_fields(client, isolated_storage):
-    payload = {
-        "document_id": "legacy",
-        "file_name": "old.pdf",
-        "status": "ready",
-        "chunks_indexed": 3,
-        "summary": "s",
-    }
-    (isolated_storage["vectorstores"] / "legacy.json").write_text(json.dumps(payload))
+def test_status_defaults_ocr_fields(client):
+    documents.write_document_status("legacy", file_name="old.pdf", status="ready")
 
     body = client.get("/documents/legacy").json()
     assert body["ocr_used"] is False
     assert body["ocr_provider"] is None
+    assert body["key_points"] == []
 
 
 def test_file_endpoint_serves_uploaded_pdf(client, isolated_storage):
