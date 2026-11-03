@@ -161,6 +161,12 @@ DATABASE_URL=postgresql://...  # same Neon database as the frontend
 BOOKIFY_STORE=postgres
 RAG_EMBEDDING_DIM=1024
 RAG_EMBEDDING_BATCH_SIZE=64
+RAG_CHUNK_SIZE=900
+RAG_CHUNK_OVERLAP=120
+RAG_CHUNK_MIN_CHARS=80
+RAG_CHUNK_STRATEGY=recursive
+RAG_CHUNK_SEMANTIC_PERCENTILE=95
+RAG_CHUNK_SEMANTIC_MIN_DISTANCE=0.10
 BOOKIFY_STORAGE_DIR=
 BOOKIFY_UPLOADS_DIR=
 BOOKIFY_VECTORSTORES_DIR=
@@ -189,6 +195,9 @@ Recommended backend keys:
 - `BOOKIFY_STORE`: `postgres` (default) or `memory` for a DB-less local run.
 - `RAG_EMBEDDING_DIM`: Embedding size, default 1024 (`mistral-embed`). Changing it needs a reindex.
 - `RAG_EMBEDDING_BATCH_SIZE`: Chunks per embedding call, default 64.
+- `RAG_CHUNK_STRATEGY`: `recursive` (default, size-based) or `semantic` (topic-boundary sentence grouping). Switching strategies requires a reindex.
+- `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP` / `RAG_CHUNK_MIN_CHARS`: Hard cap, overlap, and minimum chunk size.
+- `RAG_CHUNK_SEMANTIC_PERCENTILE` / `RAG_CHUNK_SEMANTIC_MIN_DISTANCE`: Semantic breakpoint threshold (default 95th percentile, minimum cosine distance 0.10).
 - `BOOKIFY_WARM_ON_STARTUP`: Whether to warm dependencies on startup. Set `false` on Railway so health checks pass quickly.
 - `OCR_PROVIDER`: OCR fallback for scanned PDFs: `auto` (local tesseract, then Mistral OCR), `mistral`, `tesseract`, or `off`.
 - `OCR_MIN_CHARS_PER_PAGE`: Text-density threshold below which a page is treated as a scan. Default `100`.

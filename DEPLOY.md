@@ -39,7 +39,7 @@ back to `python3` (containers, Railway). It binds `0.0.0.0:$PORT` and honours
 | `BOOKIFY_STORE` | no | `postgres` (default) or `memory` for DB-less local runs |
 | `RAG_EMBEDDING_DIM` | no | Default 1024 (`mistral-embed`); changing it requires a reindex |
 | `RAG_EMBEDDING_BATCH_SIZE` | no | Chunks per embedding call; default 64 |
-| `RAG_*` | no | Chunk size/overlap, fetch-k, top-k |
+| `RAG_*` | no | Chunking (`RAG_CHUNK_STRATEGY=recursive` default, `semantic` opt-in), size/overlap, fetch-k, top-k. Switching chunk strategy requires a reindex |
 | `OCR_PROVIDER` | no | `auto` (default), `mistral`, `tesseract`, `off` |
 | `OCR_MAX_PAGES` | no | Cost guard; default 40 |
 | `BOOKIFY_WARM_ON_STARTUP` | no | **Set `false` on Railway.** Warming loads tiktoken + the embedding stack and can push startup past the health-check window |
