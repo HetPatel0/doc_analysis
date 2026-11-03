@@ -253,3 +253,31 @@ def test_chunks_are_embedded_in_batches(monkeypatch, tmp_path):
     assert len(FakeEmbeddings.embedded_batches) > 1
     assert all(len(batch) == 1 for batch in FakeEmbeddings.embedded_batches)
     assert get_store().count_chunks("doc9") == embedded
+
+
+def test_semantic_chunking_indexes_with_metadata(monkeypatch, tmp_path):
+    from app.config import settings
+
+    sentences = (
+        "The Starter plan costs 9 USD per month. "
+        "It includes 5 gigabytes of storage. "
+        "The Team plan costs 29 USD per user. "
+        "Refunds are issued within 14 days. "
+        "Refund requests need an order number. "
+        "Refunds return to the original card."
+    )
+    install_fake_indexing(monkeypatch, [sentences])
+    monkeypatch.setattr(settings, "chunk_strategy", "semantic")
+
+    upload = tmp_path / "semantic.pdf"
+    upload.write_bytes(b"%PDF-1.4")
+    documents.index_pdf("doc10", "semantic.pdf", upload)
+
+    result = status("doc10")
+    assert result["status"] == "ready"
+    indexed = chunks("doc10")
+    assert indexed
+    assert result["chunks_indexed"] == len(indexed)
+    assert all(chunk.metadata["document_id"] == "doc10" for chunk in indexed)
+    assert {chunk.metadata["page_number"] for chunk in indexed} == {1}
+    assert "".join(chunk.page_content for chunk in indexed).count("Refund") == 3

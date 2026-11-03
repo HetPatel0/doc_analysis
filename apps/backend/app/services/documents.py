@@ -10,7 +10,7 @@ from app import dependencies as deps
 from app.config import settings
 from app.observability import capture_exception
 from app.schemas import DocumentStatusResponse
-from app.services import insights, ocr, retrieval
+from app.services import chunking, insights, ocr, retrieval
 from app.services.store import get_store
 
 
@@ -124,8 +124,6 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
     write_document_status(document_id, file_name=file_name, status="indexing")
 
     try:
-        _, Splitter = deps.get_indexing_dependencies()
-
         docs, page_count = _load_text_pages(upload_path)
         ocr_used = False
         ocr_provider = None
@@ -140,17 +138,7 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
         if not docs:
             raise ValueError("The PDF did not contain readable pages.")
 
-        splitter = Splitter.from_tiktoken_encoder(
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap,
-            add_start_index=True,
-            separators=["\n\n", "\n", ". ", " ", ""],
-        )
-        chunks = [
-            chunk
-            for chunk in splitter.split_documents(docs)
-            if len(chunk.page_content.strip()) >= settings.min_chunk_chars
-        ]
+        chunks = chunking.split_documents(docs)
 
         if not chunks:
             raise ValueError("The PDF did not contain enough readable text to index.")

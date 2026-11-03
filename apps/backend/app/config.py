@@ -32,9 +32,20 @@ class Settings:
         os.getenv("BOOKIFY_VECTORSTORES_DIR", str(storage_dir / "vectorstores"))
     )
 
+    # Chunking. ``recursive`` is the historical size-based splitter and stays
+    # the default; ``semantic`` groups sentences at topic boundaries.
+    chunk_strategy: str = os.getenv("RAG_CHUNK_STRATEGY", "recursive").lower()
     chunk_size: int = int(os.getenv("RAG_CHUNK_SIZE", "900"))
     chunk_overlap: int = int(os.getenv("RAG_CHUNK_OVERLAP", "120"))
-    min_chunk_chars: int = 80
+    min_chunk_chars: int = int(os.getenv("RAG_CHUNK_MIN_CHARS", "80"))
+    # Break where the distance between adjacent sentence embeddings is above
+    # this percentile of the page, but never below the absolute floor.
+    chunk_semantic_percentile: float = float(
+        os.getenv("RAG_CHUNK_SEMANTIC_PERCENTILE", "95")
+    )
+    chunk_semantic_min_distance: float = float(
+        os.getenv("RAG_CHUNK_SEMANTIC_MIN_DISTANCE", "0.10")
+    )
     retrieval_fetch_k: int = int(os.getenv("RAG_RETRIEVAL_FETCH_K", "16"))
     retrieval_top_k: int = int(os.getenv("RAG_RETRIEVAL_TOP_K", "5"))
     # Hybrid retrieval: fuse dense candidates with BM25, then rerank. RRF's

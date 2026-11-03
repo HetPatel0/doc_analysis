@@ -177,6 +177,49 @@ Changes:
 - `tests/test_rag_eval.py` pins the normalisation, the request/history plumbing
   and the "multi-turn triggers rewrite, concrete single-turn does not" heuristic.
 
+## Chunking (Phase 3.4, 2026-11-03)
+
+`RAG_CHUNK_STRATEGY` selects the splitter:
+
+- `recursive` (default) — the original size-based splitter: 900-token target,
+  120-token overlap, cutting at paragraph/sentence/word boundaries.
+- `semantic` — split each page into sentences, embed them with the same
+  `mistral-embed` model, and break where the cosine distance between adjacent
+  sentences is above the page's `RAG_CHUNK_SEMANTIC_PERCENTILE` (default 95)
+  **and** at least `RAG_CHUNK_SEMANTIC_MIN_DISTANCE` (default 0.10). Groups are
+  capped at `RAG_CHUNK_SIZE`, short fragments are merged with the neighbour
+  across the weaker boundary instead of being dropped, and pages are never
+  merged. Any embedding error falls back to `recursive` for that document.
+
+Both strategies return the same metadata (`page_number`, `chunk_index`,
+`source_label`), so retrieval, citations and the frontend are unchanged.
+Switching strategies invalidates the stored vectors because they belong to the
+old chunk boundaries; reindex afterwards:
+
+```bash
+RAG_CHUNK_STRATEGY=semantic .venv/bin/python scripts/reindex_documents.py
+```
+
+The eval reports `chunk_strategy`, `chunk_size` and `chunk_overlap` in its
+summary so two runs can be compared without guessing the configuration.
+
+### Measured on the golden PDF
+
+| Metric | recursive (default) | semantic |
+|---|---:|---:|
+| Chunks | 10 | 13 |
+| Retrieval hit rate | 1.000 | 1.000 |
+| Context keyword recall | 1.000 | 1.000 |
+| Answer keyword recall | 1.000 | 1.000 |
+| Unexpected refusals | 0 | 0 |
+| Index seconds (retrieval mode) | 22.5 | 25.3 |
+
+Both strategies pass `--mode retrieval` and `--mode full` with zero unexpected
+refusals. The golden set is saturated, so this proves **no regression**, not a
+quality win: semantic chunking produced three more chunks and slightly slower
+indexing for identical retrieval scores. The default therefore stays
+`recursive`; `semantic` is available for experiments and a harder corpus.
+
 ## What to measure next
 
 - Add questions against a real-world PDF (scanned one too) before trusting the
