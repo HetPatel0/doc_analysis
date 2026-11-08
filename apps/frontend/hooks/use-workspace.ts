@@ -26,18 +26,24 @@ function mergeDocumentDetails(
   if (
     !current ||
     current.documentId !== next.documentId ||
-    hasDocumentInsights(next) ||
-    !hasDocumentInsights(current)
+    hasDocumentInsights(next)
   ) {
     return next;
   }
 
   return {
     ...next,
-    summary: current.summary,
-    keyPoints: current.keyPoints,
-    actionItems: current.actionItems,
-    quiz: current.quiz,
+    summary: next.summary ?? current.summary,
+    keyPoints:
+      (next.keyPoints?.length ?? 0) > 0 ? next.keyPoints : current.keyPoints,
+    actionItems:
+      (next.actionItems?.length ?? 0) > 0
+        ? next.actionItems
+        : current.actionItems,
+    quiz: (next.quiz?.length ?? 0) > 0 ? next.quiz : current.quiz,
+    error: next.error ?? current.error,
+    insightsStatus: next.insightsStatus ?? current.insightsStatus,
+    stalled: next.stalled ?? current.stalled,
   };
 }
 

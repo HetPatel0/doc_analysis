@@ -29,6 +29,12 @@ export type DocumentSummary = {
   keyPoints?: string[];
   actionItems?: string[];
   quiz?: QuizQuestion[];
+  /** Indexing failure message from the backend, if any. */
+  error?: string | null;
+  /** pending while insights generate; ready/unavailable once they finish. */
+  insightsStatus?: "pending" | "ready" | "unavailable";
+  /** True when queued/indexing has not progressed for too long. */
+  stalled?: boolean;
 };
 
 export function hasDocumentInsights(

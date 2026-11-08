@@ -229,6 +229,7 @@ def test_insights_failure_keeps_document_ready(monkeypatch, tmp_path):
     assert result["file_name"] == "ok.pdf"
     assert result["chunks_indexed"] > 0
     assert result["summary"] is None
+    assert result["insights_status"] == "unavailable"
 
 
 def test_ready_is_written_before_insights(monkeypatch, tmp_path):
@@ -285,7 +286,37 @@ def test_insights_are_patched_in_after_ready(monkeypatch, tmp_path):
     assert result["status"] == "ready"
     assert result["summary"] == "A short summary."
     assert result["key_points"] == ["one point"]
+    assert result["insights_status"] == "ready"
     assert writes == ["indexing", "ready", "ready"]
+
+
+def test_delete_during_enrichment_does_not_resurrect(monkeypatch, tmp_path):
+    install_fake_indexing(monkeypatch, ["x" * 400])
+
+    def delete_then_enrich(chunks):
+        get_store().delete_document("doc-vanished")
+        return {"summary": "too late", "key_points": [], "action_items": [], "quiz": []}
+
+    monkeypatch.setattr(documents.insights, "generate_insights", delete_then_enrich)
+
+    upload = tmp_path / "gone.pdf"
+    upload.write_bytes(b"%PDF-1.4")
+    documents.index_pdf("doc-vanished", "gone.pdf", upload)
+
+    assert status("doc-vanished") is None
+    assert get_store().count_chunks("doc-vanished") == 0
+
+
+def test_deleted_document_is_not_reindexed(monkeypatch, tmp_path):
+    install_fake_indexing(monkeypatch, ["x" * 400])
+    documents._remember_deleted("doc-deleted")
+
+    upload = tmp_path / "gone.pdf"
+    upload.write_bytes(b"%PDF-1.4")
+    documents.index_pdf("doc-deleted", "gone.pdf", upload)
+
+    assert status("doc-deleted") is None
+    assert get_store().count_chunks("doc-deleted") == 0
 
 
 def test_large_page_is_split_into_multiple_chunks(monkeypatch, tmp_path):

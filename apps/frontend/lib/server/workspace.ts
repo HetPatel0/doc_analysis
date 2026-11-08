@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 
 import { auth } from "@/lib/auth";
@@ -59,6 +59,8 @@ type BackendStatusResponse = {
   key_points?: string[];
   action_items?: string[];
   quiz?: Array<{ question: string; answer: string }>;
+  insights_status?: "pending" | "ready" | "unavailable";
+  stalled?: boolean;
   detail?: string;
 };
 
@@ -567,14 +569,16 @@ export async function listMessagesForActor(
 ): Promise<StoredMessage[]> {
   await assertDocumentOwnership(actor, documentId);
 
+  // Fetch newest-first so long conversations keep the recent turns, then
+  // restore chronological order for rendering.
   const rows = await db
     .select()
     .from(messages)
     .where(eq(messages.documentId, documentId))
-    .orderBy(asc(messages.createdAt))
+    .orderBy(desc(messages.createdAt))
     .limit(200);
 
-  return rows.map((row) => ({
+  return rows.reverse().map((row) => ({
     id: row.id,
     role: row.role as "user" | "assistant",
     content: row.content,
@@ -787,7 +791,32 @@ export async function syncDocumentStatus(
     keyPoints: result.key_points ?? [],
     actionItems: result.action_items ?? [],
     quiz: result.quiz ?? [],
+    error: result.error ?? null,
+    insightsStatus: result.insights_status,
+    stalled: Boolean(result.stalled),
   };
+}
+
+export async function retryDocumentForActor(
+  actor: ActorContext,
+  documentId: string
+): Promise<DocumentSummary> {
+  await assertDocumentOwnership(actor, documentId);
+
+  const { response, result } = await requestBackend<{
+    status?: string;
+    detail?: string;
+  }>(`/documents/${documentId}/retry`, {
+    method: "POST",
+    cache: "no-store",
+    errorMessage: "Could not reach the PDF backend.",
+  });
+
+  if (!response.ok) {
+    throw new Error(result.detail ?? "Could not retry indexing.");
+  }
+
+  return syncDocumentStatus(actor, documentId);
 }
 
 export type DocumentFile = {
@@ -890,16 +919,21 @@ export async function chatWithDocumentForActor(
     throw new Error(result.detail ?? "Chat request failed.");
   }
 
+  // Both rows land in one statement, so give them distinct timestamps to keep
+  // the user turn ahead of the assistant turn when messages are re-read.
+  const askedAt = new Date();
   await db.insert(messages).values([
     {
       documentId,
       role: "user",
       content: trimmedMessage.slice(0, MAX_MESSAGE_CHARS),
+      createdAt: askedAt,
     },
     {
       documentId,
       role: "assistant",
       content: result.answer.slice(0, MAX_MESSAGE_CHARS),
+      createdAt: new Date(askedAt.getTime() + 1),
     },
   ]);
 

@@ -88,6 +88,11 @@ class Settings:
 
     api_secret: str = os.getenv("BOOKIFY_API_SECRET", "")
     max_upload_mb: int = int(os.getenv("BOOKIFY_MAX_UPLOAD_MB", "20"))
+    # A document stuck in queued/indexing for longer than this is treated as
+    # orphaned (the in-process indexing task died on a deploy/restart).
+    index_stale_seconds: int = int(
+        os.getenv("BOOKIFY_INDEX_STALE_SECONDS", "900")
+    )
 
     sentry_dsn: str = os.getenv("SENTRY_DSN", "")
     sentry_environment: str = os.getenv("SENTRY_ENVIRONMENT", "production")

@@ -23,6 +23,7 @@ import math
 import threading
 from collections import defaultdict
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from langchain_core.documents import Document
@@ -41,6 +42,8 @@ STATUS_FIELDS = (
     "quiz",
     "ocr_used",
     "ocr_provider",
+    "insights_status",
+    "updated_at",
 )
 
 
@@ -61,9 +64,12 @@ class Store(Protocol):
         quiz: list[dict[str, str]] | None = None,
         ocr_used: bool = False,
         ocr_provider: str | None = None,
+        insights_status: str = "pending",
     ) -> None: ...
 
     def read_status(self, document_id: str) -> dict[str, Any] | None: ...
+
+    def ping(self) -> None: ...
 
     def replace_chunks(
         self,
@@ -94,6 +100,7 @@ def _status_row(
     quiz: list[dict[str, str]] | None = None,
     ocr_used: bool = False,
     ocr_provider: str | None = None,
+    insights_status: str = "pending",
 ) -> dict[str, Any]:
     return {
         "document_id": document_id,
@@ -107,6 +114,8 @@ def _status_row(
         "quiz": quiz or [],
         "ocr_used": ocr_used,
         "ocr_provider": ocr_provider,
+        "insights_status": insights_status,
+        "updated_at": datetime.now(UTC),
     }
 
 
@@ -219,8 +228,17 @@ class PostgresStore:
                         quiz jsonb not null default '[]'::jsonb,
                         ocr_used boolean not null default false,
                         ocr_provider text,
+                        insights_status text not null default 'pending',
                         updated_at timestamptz not null default now()
                     )
+                    """
+                )
+                # Existing deployments predate the insights/stale bookkeeping.
+                cur.execute(
+                    """
+                    alter table document_index
+                        add column if not exists insights_status
+                        text not null default 'pending'
                     """
                 )
                 cur.execute(
@@ -267,6 +285,7 @@ class PostgresStore:
         quiz: list[dict[str, str]] | None = None,
         ocr_used: bool = False,
         ocr_provider: str | None = None,
+        insights_status: str = "pending",
     ) -> None:
         self.ensure_schema()
         row = _status_row(
@@ -281,15 +300,18 @@ class PostgresStore:
             quiz=quiz,
             ocr_used=ocr_used,
             ocr_provider=ocr_provider,
+            insights_status=insights_status,
         )
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 insert into document_index (
                     document_id, file_name, status, chunks_indexed, error, summary,
-                    key_points, action_items, quiz, ocr_used, ocr_provider, updated_at
+                    key_points, action_items, quiz, ocr_used, ocr_provider,
+                    insights_status, updated_at
                 ) values (
-                    %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, now()
+                    %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s,
+                    %s, now()
                 )
                 on conflict (document_id) do update set
                     file_name = excluded.file_name,
@@ -302,6 +324,7 @@ class PostgresStore:
                     quiz = excluded.quiz,
                     ocr_used = excluded.ocr_used,
                     ocr_provider = excluded.ocr_provider,
+                    insights_status = excluded.insights_status,
                     updated_at = now()
                 """,
                 (
@@ -316,6 +339,7 @@ class PostgresStore:
                     json.dumps(row["quiz"]),
                     row["ocr_used"],
                     row["ocr_provider"],
+                    row["insights_status"],
                 ),
             )
 
@@ -328,13 +352,19 @@ class PostgresStore:
                 """
                 select document_id, file_name, status, chunks_indexed, error,
                        summary, key_points, action_items, quiz, ocr_used,
-                       ocr_provider
+                       ocr_provider, insights_status, updated_at
                 from document_index where document_id = %s
                 """,
                 (document_id,),
             )
             row = cur.fetchone()
         return dict(row) if row else None
+
+    def ping(self) -> None:
+        """Readiness probe: fail unless the database answers a trivial query."""
+        self.ensure_schema()
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("select 1")
 
     # -- chunks --------------------------------------------------------------
 
@@ -481,6 +511,9 @@ class MemoryStore:
 
     def count_chunks(self, document_id: str) -> int:
         return len(self.chunks.get(document_id, []))
+
+    def ping(self) -> None:
+        return None
 
     def delete_document(self, document_id: str) -> None:
         self.statuses.pop(document_id, None)

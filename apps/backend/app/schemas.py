@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -38,3 +40,8 @@ class DocumentStatusResponse(BaseModel):
     quiz: list[QuizQuestion] = Field(default_factory=list)
     ocr_used: bool = False
     ocr_provider: str | None = None
+    # pending -> insights are still being generated; ready/unavailable -> done.
+    insights_status: str = "pending"
+    updated_at: datetime | None = None
+    # True when queued/indexing has not moved for BOOKIFY_INDEX_STALE_SECONDS.
+    stalled: bool = False

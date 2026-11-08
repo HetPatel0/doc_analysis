@@ -199,6 +199,7 @@ Recommended backend keys:
 - `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP` / `RAG_CHUNK_MIN_CHARS`: Hard cap, overlap, and minimum chunk size.
 - `RAG_CHUNK_SEMANTIC_PERCENTILE` / `RAG_CHUNK_SEMANTIC_MIN_DISTANCE`: Semantic breakpoint threshold (default 95th percentile, minimum cosine distance 0.10).
 - `BOOKIFY_WARM_ON_STARTUP`: Whether to warm the indexing/embedding stack. Warming runs in a background thread, so it no longer blocks the health check.
+- `BOOKIFY_INDEX_STALE_SECONDS`: A document stuck in `queued`/`indexing` longer than this is reported as `stalled` and can be retried. Default `900`.
 - `OCR_PROVIDER`: OCR fallback for scanned PDFs: `auto` (local tesseract, then Mistral OCR), `mistral`, `tesseract`, or `off`.
 - `OCR_MIN_CHARS_PER_PAGE`: Text-density threshold below which a page is treated as a scan. Default `100`.
 - `OCR_MAX_PAGES`: Safety/cost cap on OCR pages. Default `40`.
@@ -270,10 +271,17 @@ The hot paths are deliberately decoupled from optional work:
   connection pool.
 - **Warm-up.** `BOOKIFY_WARM_ON_STARTUP=true` now warms imports and the
   tokenizer in a background thread, so the health check is not blocked.
+- **Crash-safe status.** A document that stops progressing is reported as
+  `stalled` (see `BOOKIFY_INDEX_STALE_SECONDS`) and the UI offers a retry. A
+  delete that lands mid-indexing is not resurrected by the finishing task.
 
 The backend logs timings for every index and retrieval:
 `index <id> ready in ...` and
 `chat <id> retrieval rewrite=... embed=... search=...`.
+
+Operational endpoints: `/health` is a liveness check; `/health/ready` also
+probes the vector store with `select 1` and returns `503` when it is
+unreachable.
 
 ## Deployment Notes
 

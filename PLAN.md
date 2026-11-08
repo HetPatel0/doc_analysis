@@ -8,7 +8,9 @@
 > (3.5), and semantic chunking (3.4) are done; extra formats (3.6) are next.
 > A latency pass (2026-11-08) made `ready` available before insights, opened
 > PDF previews during indexing, forwarded byte ranges, and pooled backend DB
-> connections.
+> connections. A reliability pass added stalled-index detection + retry,
+> delete-during-index protection, latest-message pagination, per-owner rate
+> limits, and a readiness probe.
 
 ## Current pain points (why this order)
 

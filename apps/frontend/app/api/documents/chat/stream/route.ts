@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { rateLimit } from "@/lib/server/rate-limit";
 import {
   applyActorCookies,
   resolveActor,
@@ -11,6 +12,18 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     const actor = await resolveActor(request, { withWorkspace: false });
+    const retryAfter = rateLimit(actor, "chat");
+
+    if (retryAfter) {
+      return applyActorCookies(
+        actor,
+        NextResponse.json(
+          { detail: "Too many messages. Try again shortly." },
+          { status: 429, headers: { "Retry-After": String(retryAfter) } }
+        )
+      );
+    }
+
     const body = (await request.json()) as {
       documentId?: string;
       message?: string;

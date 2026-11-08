@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -16,6 +18,12 @@ from app.services import chunking, insights, ocr, retrieval
 from app.services.store import get_store
 
 logger = logging.getLogger(__name__)
+
+# document_id -> monotonic timestamp. Guards the tiny window between scheduling
+# an indexing task and its first status write, plus mid-index deletes.
+_deleted_documents: dict[str, float] = {}
+_deleted_documents_lock = threading.Lock()
+_TOMBSTONE_TTL_SECONDS = 24 * 60 * 60
 
 
 def get_legacy_vectorstore_path(document_id: str) -> Path:
@@ -44,6 +52,7 @@ def write_document_status(
     quiz: list[dict[str, str]] | None = None,
     ocr_used: bool = False,
     ocr_provider: str | None = None,
+    insights_status: str = "pending",
 ) -> None:
     get_store().write_status(
         document_id,
@@ -57,6 +66,7 @@ def write_document_status(
         quiz=quiz,
         ocr_used=ocr_used,
         ocr_provider=ocr_provider,
+        insights_status=insights_status,
     )
 
 
@@ -71,7 +81,16 @@ def read_document_status(document_id: str) -> DocumentStatusResponse:
     record = get_store().read_status(document_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Document not found.")
-    return DocumentStatusResponse.model_validate(record)
+
+    updated_at = record.get("updated_at")
+    stalled = False
+    if record.get("status") in {"queued", "indexing"} and updated_at:
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+        age = (datetime.now(UTC) - updated_at).total_seconds()
+        stalled = age > settings.index_stale_seconds
+
+    return DocumentStatusResponse.model_validate({**record, "stalled": stalled})
 
 
 def ensure_document_exists(document_id: str) -> None:
@@ -90,6 +109,7 @@ def ensure_document_exists(document_id: str) -> None:
 
 
 def delete_document_files(document_id: str) -> None:
+    _remember_deleted(document_id)
     get_store().delete_document(document_id)
     shutil.rmtree(get_legacy_vectorstore_path(document_id), ignore_errors=True)
     legacy_status = settings.vectorstores_dir / f"{document_id}.json"
@@ -124,7 +144,45 @@ def _embed_chunks(texts: list[str]) -> list[list[float]]:
     return vectors
 
 
+def _remember_deleted(document_id: str) -> None:
+    """Remember a deletion so an in-flight indexing task cannot resurrect it.
+
+    Indexing runs as a FastAPI background task in this same process, so an
+    in-memory tombstone is enough for the initial write. The DB check in
+    ``_document_was_deleted`` covers the rest if the deletion lands mid-index.
+    """
+    now = time.monotonic()
+    with _deleted_documents_lock:
+        _deleted_documents[document_id] = now
+        cutoff = now - _TOMBSTONE_TTL_SECONDS
+        for key, seen in list(_deleted_documents.items()):
+            if seen < cutoff:
+                del _deleted_documents[key]
+
+
+def _recently_deleted(document_id: str) -> bool:
+    with _deleted_documents_lock:
+        return document_id in _deleted_documents
+
+
+def _document_was_deleted(document_id: str) -> bool:
+    """True when the status row vanished while indexing was running.
+
+    Deletes can land mid-indexing; without this check the final status write
+    would resurrect the row and leave orphan chunks behind.
+    """
+    if _recently_deleted(document_id):
+        return True
+    try:
+        return get_store().read_status(document_id) is None
+    except Exception:
+        # Never let bookkeeping hide a real indexing error.
+        return False
+
+
 def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
+    if _recently_deleted(document_id):
+        return
     started = time.perf_counter()
     write_document_status(document_id, file_name=file_name, status="indexing")
 
@@ -183,6 +241,9 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
         # Chunks are searchable as soon as they are stored. Insights are a
         # second LLM call and must not hold chat (or the PDF preview) hostage,
         # so mark the document ready now and patch the insights in afterwards.
+        if _document_was_deleted(document_id):
+            get_store().delete_document(document_id)
+            return
         write_document_status(
             document_id,
             file_name=file_name,
@@ -193,11 +254,15 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
         )
     except Exception as exc:
         capture_exception(exc)
+        if _document_was_deleted(document_id):
+            get_store().delete_document(document_id)
+            return
         write_document_status(
             document_id,
             file_name=file_name,
             status="failed",
             error=str(exc),
+            insights_status="unavailable",
         )
         logger.info(
             "index %s failed in %.2fs after load=%.2fs ocr=%.2fs chunk=%.2fs "
@@ -228,19 +293,22 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
         document_insights.get(key)
         for key in ("summary", "key_points", "action_items", "quiz")
     )
-    if has_insights:
-        try:
-            write_document_status(
-                document_id,
-                file_name=file_name,
-                status="ready",
-                chunks_indexed=len(chunks),
-                ocr_used=ocr_used,
-                ocr_provider=ocr_provider,
-                **document_insights,
-            )
-        except Exception as exc:
-            capture_exception(exc)
+    if _document_was_deleted(document_id):
+        get_store().delete_document(document_id)
+        return
+    try:
+        write_document_status(
+            document_id,
+            file_name=file_name,
+            status="ready",
+            chunks_indexed=len(chunks),
+            ocr_used=ocr_used,
+            ocr_provider=ocr_provider,
+            insights_status="ready" if has_insights else "unavailable",
+            **document_insights,
+        )
+    except Exception as exc:
+        capture_exception(exc)
 
     logger.info(
         "index %s ready in %.2fs (load=%.2fs ocr=%.2fs chunk=%.2fs embed=%.2fs "

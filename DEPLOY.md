@@ -43,6 +43,7 @@ back to `python3` (containers, Railway). It binds `0.0.0.0:$PORT` and honours
 | `OCR_PROVIDER` | no | `auto` (default), `mistral`, `tesseract`, `off` |
 | `OCR_MAX_PAGES` | no | Cost guard; default 40 |
 | `BOOKIFY_WARM_ON_STARTUP` | no | Warms imports + tiktoken in a background thread; safe to leave enabled because it no longer blocks the health check |
+| `BOOKIFY_INDEX_STALE_SECONDS` | no | Documents stuck in `queued`/`indexing` longer than this are `stalled` and retryable; default 900 |
 | `SENTRY_DSN` | no | Blank disables error reporting |
 
 ### State: Neon for vectors, volume for uploads
@@ -71,6 +72,11 @@ cd apps/backend
 
 Until object storage lands (see below), run a single backend replica: two
 replicas would write uploads to two different disks behind one load balancer.
+Indexing runs as an in-process background task, so the delete-during-index
+tombstone and the stalled-document retry assume one backend replica as well.
+
+`/health` is a liveness check; point Railway at `/health/ready` if you want
+deploys to wait for the vector store (`select 1`) to answer.
 
 ### OCR
 

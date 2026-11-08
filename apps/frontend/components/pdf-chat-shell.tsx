@@ -66,6 +66,9 @@ export default function PdfChatShell() {
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(
     null
   );
+  const [retryingDocumentId, setRetryingDocumentId] = useState<string | null>(
+    null
+  );
   const [viewer, setViewer] = useState<{
     documentId: string | null;
     page: number;
@@ -155,8 +158,8 @@ export default function PdfChatShell() {
     async function loadDocumentDetails() {
       try {
         // `ready` is written before the optional insights call, so keep
-        // re-fetching for a short window instead of blocking chat on it.
-        for (let attempt = 0; attempt < 15; attempt += 1) {
+        // re-fetching until the backend reports enrichment finished.
+        for (let attempt = 0; attempt < 40; attempt += 1) {
           const response = await fetch(`/api/documents/${activeDocumentId}`, {
             cache: "no-store",
           });
@@ -174,11 +177,17 @@ export default function PdfChatShell() {
 
           setDocument(result);
 
-          if (hasDocumentInsights(result)) {
+          // The backend tells us definitively when enrichment is done;
+          // fall back to the payload when talking to an older backend.
+          if (result.insightsStatus && result.insightsStatus !== "pending") {
+            return;
+          }
+          if (!result.insightsStatus && hasDocumentInsights(result)) {
             return;
           }
 
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          const delay = attempt < 10 ? 1000 : 3000;
+          await new Promise((resolve) => setTimeout(resolve, delay));
           if (cancelled) {
             return;
           }
@@ -199,6 +208,41 @@ export default function PdfChatShell() {
       cancelled = true;
     };
   }, [activeDocumentId, document?.status, setDocument]);
+
+  // A document restored from a workspace snapshot may still say queued/indexing
+  // from a previous session. Ask the backend once so a crashed indexing run
+  // surfaces as stalled (and gets a retry button) instead of spinning forever.
+  useEffect(() => {
+    if (
+      !activeDocumentId ||
+      (document?.status !== "queued" && document?.status !== "indexing") ||
+      document?.stalled
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/documents/${activeDocumentId}`, {
+          cache: "no-store",
+        });
+        const result =
+          ((await response.json()) as DocumentSummary & ErrorResponse) ?? {};
+        if (!cancelled && response.ok && result.documentId) {
+          setDocument(result);
+        }
+      } catch {
+        // Keep the workspace state; the upload poll or a manual retry can
+        // still recover it.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDocumentId, document?.status, document?.stalled, setDocument]);
 
   function setViewerPage(page: number) {
     setViewer({ documentId: activeDocumentId, page });
@@ -222,8 +266,10 @@ export default function PdfChatShell() {
   }
 
   async function pollDocumentStatus(documentId: string) {
-    for (let attempt = 0; attempt < 120; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      // Poll fast while indexing usually finishes in seconds, then back off.
+      const delay = attempt < 10 ? 1000 : attempt < 30 ? 2000 : 5000;
+      await new Promise((resolve) => setTimeout(resolve, delay));
 
       const response = await fetch(`/api/documents/${documentId}`, {
         cache: "no-store",
@@ -236,6 +282,15 @@ export default function PdfChatShell() {
       }
 
       workspace.setDocument(result);
+
+      if (result.stalled) {
+        // Leave the document in place so the pane can offer a retry; do not
+        // refresh, because workspace snapshots do not carry the stalled flag.
+        chat.appendAssistant(
+          'Indexing stopped making progress. Use "Retry indexing" in the document pane.'
+        );
+        return;
+      }
 
       if (result.status === "ready") {
         await workspace.refresh().catch(() => undefined);
@@ -320,6 +375,40 @@ export default function PdfChatShell() {
       );
     } finally {
       setDeletingDocumentId(null);
+    }
+  }
+
+  async function handleRetryDocument() {
+    const documentId = document?.documentId;
+    if (!documentId || retryingDocumentId) {
+      return;
+    }
+
+    setRetryingDocumentId(documentId);
+    detailsFetchedRef.current = null;
+
+    try {
+      const response = await fetch(`/api/documents/${documentId}/retry`, {
+        method: "POST",
+      });
+      const result =
+        ((await response.json()) as DocumentSummary & ErrorResponse) ?? {};
+
+      if (!response.ok || !result.documentId) {
+        throw new Error(result.detail ?? "Could not retry indexing.");
+      }
+
+      setDocument({ ...result, stalled: false });
+      await workspace.refresh().catch(() => undefined);
+      chat.appendAssistant(`Retrying indexing for "${result.fileName}".`);
+      await pollDocumentStatus(documentId);
+      scrollMessagesToBottom();
+    } catch (error) {
+      chat.appendAssistant(
+        toErrorMessage(error, "Could not retry indexing.")
+      );
+    } finally {
+      setRetryingDocumentId(null);
     }
   }
 
@@ -507,11 +596,15 @@ export default function PdfChatShell() {
               isDeleting={Boolean(
                 document && deletingDocumentId === document.documentId
               )}
+              isRetrying={Boolean(
+                document && retryingDocumentId === document.documentId
+              )}
               onDelete={
                 document
                   ? () => void handleDelete(document.documentId)
                   : undefined
               }
+              onRetry={document ? () => void handleRetryDocument() : undefined}
             />
           </section>
 
@@ -557,7 +650,11 @@ export default function PdfChatShell() {
                   ) : null}
                 </div>
                 <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
-                  {document ? statusText[document.status] : "Idle"}
+                  {document
+                    ? document.stalled
+                      ? "Stalled"
+                      : statusText[document.status]
+                    : "Idle"}
                 </span>
               </div>
 

@@ -17,6 +17,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 sys.path.insert(0, str(BACKEND_ROOT / "tests"))
 
 from app.config import settings  # noqa: E402
+from app.services import documents  # noqa: E402
 from app.services import store as rag_store  # noqa: E402
 
 
@@ -28,6 +29,8 @@ def isolated_storage(tmp_path, monkeypatch):
     vectorstores.mkdir()
     monkeypatch.setattr(settings, "uploads_dir", uploads)
     monkeypatch.setattr(settings, "vectorstores_dir", vectorstores)
+    # Deletion tombstones are process state; keep them from leaking across tests.
+    monkeypatch.setattr(documents, "_deleted_documents", {})
     # The suite never touches Postgres: every test gets a fresh memory store.
     rag_store.set_store(rag_store.MemoryStore())
     yield {"uploads": uploads, "vectorstores": vectorstores}

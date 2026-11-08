@@ -32,6 +32,34 @@ def get_document_file(document_id: str) -> FileResponse:
     )
 
 
+@router.post(
+    "/documents/{document_id}/retry", dependencies=[Depends(require_backend_auth)]
+)
+def retry_document(
+    document_id: str, background_tasks: BackgroundTasks
+) -> dict[str, str]:
+    """Re-run indexing for a failed or orphaned document."""
+    status = documents.read_document_status(document_id)
+    if status.status == "ready":
+        raise HTTPException(status_code=409, detail="Document is already indexed.")
+    if status.status in {"queued", "indexing"} and not status.stalled:
+        raise HTTPException(
+            status_code=409, detail="Indexing is already in progress."
+        )
+
+    upload_path = documents.find_uploaded_file(document_id)
+    if upload_path is None:
+        raise HTTPException(status_code=404, detail="Document file not found.")
+
+    documents.write_document_status(
+        document_id, file_name=status.file_name, status="queued"
+    )
+    background_tasks.add_task(
+        documents.index_pdf, document_id, status.file_name, upload_path
+    )
+    return {"document_id": document_id, "status": "queued"}
+
+
 @router.get(
     "/documents/{document_id}",
     response_model=DocumentStatusResponse,

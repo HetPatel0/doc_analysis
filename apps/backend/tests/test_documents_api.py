@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from app.config import settings
 from app.services import documents
+from app.services.store import get_store
 
 
 def upload(client, payload: bytes, name: str = "notes.pdf", content_type: str = "application/pdf"):
@@ -74,6 +77,30 @@ def test_status_defaults_ocr_fields(client):
     assert body["ocr_used"] is False
     assert body["ocr_provider"] is None
     assert body["key_points"] == []
+    assert body["insights_status"] == "pending"
+    assert body["updated_at"] is not None
+    assert body["stalled"] is False
+
+
+def test_status_marks_stuck_indexing_as_stalled(client):
+    documents.write_document_status("stuck", file_name="a.pdf", status="indexing")
+    get_store().statuses["stuck"]["updated_at"] = datetime.now(UTC) - timedelta(
+        seconds=settings.index_stale_seconds + 60
+    )
+
+    body = client.get("/documents/stuck").json()
+    assert body["status"] == "indexing"
+    assert body["stalled"] is True
+
+
+def test_status_never_marks_ready_as_stalled(client):
+    documents.write_document_status("done", file_name="a.pdf", status="ready")
+    get_store().statuses["done"]["updated_at"] = datetime.now(UTC) - timedelta(
+        days=1
+    )
+
+    body = client.get("/documents/done").json()
+    assert body["stalled"] is False
 
 
 def test_file_endpoint_serves_uploaded_pdf(client, isolated_storage):
@@ -110,6 +137,72 @@ def test_delete_removes_status_upload_and_vectorstore(client, isolated_storage):
 
 def test_delete_unknown_document_is_404(client):
     assert client.delete("/documents/missing").status_code == 404
+
+
+def test_retry_requeues_a_failed_document(client, isolated_storage, monkeypatch):
+    calls: list[tuple] = []
+    monkeypatch.setattr(documents, "index_pdf", lambda *args: calls.append(args))
+    documents.write_document_status(
+        "retry", file_name="a.pdf", status="failed", error="boom"
+    )
+    (isolated_storage["uploads"] / "retry-a.pdf").write_bytes(b"%PDF-1.4")
+
+    response = client.post("/documents/retry/retry")
+
+    assert response.status_code == 200
+    assert response.json() == {"document_id": "retry", "status": "queued"}
+    assert calls and calls[0][0] == "retry"
+    assert client.get("/documents/retry").json()["status"] == "queued"
+
+
+def test_retry_requeues_stalled_indexing(client, isolated_storage, monkeypatch):
+    monkeypatch.setattr(documents, "index_pdf", lambda *args: None)
+    documents.write_document_status("stuck", file_name="a.pdf", status="indexing")
+    get_store().statuses["stuck"]["updated_at"] = datetime.now(UTC) - timedelta(
+        seconds=settings.index_stale_seconds + 60
+    )
+    (isolated_storage["uploads"] / "stuck-a.pdf").write_bytes(b"%PDF-1.4")
+
+    assert client.post("/documents/stuck/retry").status_code == 200
+
+
+def test_retry_rejects_active_indexing(client, isolated_storage):
+    documents.write_document_status("busy", file_name="a.pdf", status="indexing")
+    (isolated_storage["uploads"] / "busy-a.pdf").write_bytes(b"%PDF-1.4")
+
+    assert client.post("/documents/busy/retry").status_code == 409
+
+
+def test_retry_rejects_ready_document(client, isolated_storage):
+    documents.write_document_status("done", file_name="a.pdf", status="ready")
+    (isolated_storage["uploads"] / "done-a.pdf").write_bytes(b"%PDF-1.4")
+
+    assert client.post("/documents/done/retry").status_code == 409
+
+
+def test_retry_404_when_upload_is_missing(client):
+    documents.write_document_status("gone", file_name="a.pdf", status="failed")
+
+    assert client.post("/documents/gone/retry").status_code == 404
+
+
+def test_readiness_reports_the_store(client):
+    response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+def test_readiness_returns_503_when_the_store_is_down(client, monkeypatch):
+    def boom() -> None:
+        raise RuntimeError("store unavailable")
+
+    monkeypatch.setattr(get_store(), "ping", boom)
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Vector store unavailable."
 
 
 def test_auth_guard_blocks_requests_without_secret(client, api_secret):

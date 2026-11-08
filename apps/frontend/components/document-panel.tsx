@@ -36,6 +36,8 @@ type DocumentPanelProps = {
   onPageChange: (page: number) => void;
   isDeleting?: boolean;
   onDelete?: () => void;
+  isRetrying?: boolean;
+  onRetry?: () => void;
 };
 
 export function DocumentPanel({
@@ -45,6 +47,8 @@ export function DocumentPanel({
   onPageChange,
   isDeleting = false,
   onDelete,
+  isRetrying = false,
+  onRetry,
 }: DocumentPanelProps) {
   const [tab, setTab] = useState<"pdf" | "insights">("pdf");
 
@@ -152,15 +156,32 @@ export function DocumentPanel({
         >
           {/*
            * The uploaded file exists as soon as the backend accepts it, so the
-           * PDF can open while indexing continues. Only a failed document has
-           * no useful preview.
+           * PDF can open while indexing continues. Only a failed or stalled
+           * document has no usable indexing state.
            */}
-          {document.status === "failed" ? (
+          {document.status === "failed" || document.stalled ? (
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-              <LoaderCircle className="size-4 text-muted-foreground/60" />
+              <LoaderCircle
+                className={cn(
+                  "size-4 text-muted-foreground/60",
+                  isRetrying && "animate-spin"
+                )}
+              />
               <p className="text-[12px] text-muted-foreground">
-                This document could not be indexed.
+                {document.status === "failed"
+                  ? document.error || "This document could not be indexed."
+                  : "Indexing stopped making progress."}
               </p>
+              {onRetry ? (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  disabled={isRetrying}
+                  className="mt-1 rounded-md border border-border px-2.5 py-1 text-[11.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isRetrying ? "Retrying…" : "Retry indexing"}
+                </button>
+              ) : null}
             </div>
           ) : (
             <PdfViewer
