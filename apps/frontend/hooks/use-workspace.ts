@@ -3,22 +3,13 @@
 import { useCallback, useState } from "react";
 
 import { reportError } from "@/lib/errors";
-import type { DocumentSummary, WorkspaceState } from "@/lib/workspace-types";
+import {
+  hasDocumentInsights,
+  type DocumentSummary,
+  type WorkspaceState,
+} from "@/lib/workspace-types";
 
 type ErrorResponse = { detail?: string };
-
-function hasInsights(document: DocumentSummary | null): boolean {
-  if (!document) {
-    return false;
-  }
-
-  return (
-    Boolean(document.summary) ||
-    (document.keyPoints?.length ?? 0) > 0 ||
-    (document.actionItems?.length ?? 0) > 0 ||
-    (document.quiz?.length ?? 0) > 0
-  );
-}
 
 /**
  * Workspace snapshots do not carry generated insights. Keep the details we
@@ -35,8 +26,8 @@ function mergeDocumentDetails(
   if (
     !current ||
     current.documentId !== next.documentId ||
-    hasInsights(next) ||
-    !hasInsights(current)
+    hasDocumentInsights(next) ||
+    !hasDocumentInsights(current)
   ) {
     return next;
   }

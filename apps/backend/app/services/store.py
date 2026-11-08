@@ -22,6 +22,7 @@ import json
 import math
 import threading
 from collections import defaultdict
+from contextlib import contextmanager
 from typing import Any, Protocol
 
 from langchain_core.documents import Document
@@ -117,10 +118,66 @@ class PostgresStore:
         self._embedding_dim = embedding_dim
         self._schema_ready = False
         self._lock = threading.Lock()
+        self._pool = None
+        self._pool_lock = threading.Lock()
 
     # -- connection / schema -------------------------------------------------
 
+    def _ensure_pool(self):
+        """Create the psycopg pool once the vector extension exists.
+
+        Registering the pgvector adapter fails before ``ensure_schema`` has run,
+        so the pool is only created after schema setup. If ``psycopg_pool`` is
+        not installed we fall back to one connection per operation, which keeps
+        the offline test path and older environments working.
+        """
+        if self._pool is not None:
+            return self._pool
+
+        with self._pool_lock:
+            if self._pool is not None:
+                return self._pool
+
+            try:
+                from psycopg_pool import ConnectionPool
+            except ImportError:
+                return None
+
+            def configure(conn) -> None:
+                from pgvector.psycopg import register_vector
+
+                register_vector(conn)
+
+            self._pool = ConnectionPool(
+                self._url,
+                min_size=1,
+                max_size=5,
+                kwargs={"prepare_threshold": None, "connect_timeout": 15},
+                configure=configure,
+                # Neon drops idle connections when compute suspends, so validate
+                # the socket before handing it out. This is one cheap round-trip
+                # on an open connection versus a full TLS/PgBouncer handshake.
+                check=ConnectionPool.check_connection,
+                open=True,
+                name="bookify-pg",
+            )
+
+        return self._pool
+
+    @contextmanager
     def _connect(self, *, register: bool = True):
+        """Yield a pooled connection after schema setup, else a direct one.
+
+        Every chat turn used to open several fresh Neon connections (TLS +
+        PgBouncer handshake each time). Reusing a small pool removes that cost
+        while keeping the direct path for the one-time schema/extension setup.
+        """
+        pool = self._ensure_pool() if register and self._schema_ready else None
+        if pool is not None:
+            with pool.connection(timeout=15) as conn:
+                yield conn
+            return
+
         import psycopg
 
         # Neon's pooled endpoint runs PgBouncer in transaction mode, which is
@@ -128,11 +185,15 @@ class PostgresStore:
         conn = psycopg.connect(
             self._url, prepare_threshold=None, connect_timeout=15
         )
-        if register:
-            from pgvector.psycopg import register_vector
+        try:
+            if register:
+                from pgvector.psycopg import register_vector
 
-            register_vector(conn)
-        return conn
+                register_vector(conn)
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def ensure_schema(self) -> None:
         if self._schema_ready:

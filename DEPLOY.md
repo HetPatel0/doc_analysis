@@ -42,7 +42,7 @@ back to `python3` (containers, Railway). It binds `0.0.0.0:$PORT` and honours
 | `RAG_*` | no | Chunking (`RAG_CHUNK_STRATEGY=recursive` default, `semantic` opt-in), size/overlap, fetch-k, top-k. Switching chunk strategy requires a reindex |
 | `OCR_PROVIDER` | no | `auto` (default), `mistral`, `tesseract`, `off` |
 | `OCR_MAX_PAGES` | no | Cost guard; default 40 |
-| `BOOKIFY_WARM_ON_STARTUP` | no | **Set `false` on Railway.** Warming loads tiktoken + the embedding stack and can push startup past the health-check window |
+| `BOOKIFY_WARM_ON_STARTUP` | no | Warms imports + tiktoken in a background thread; safe to leave enabled because it no longer blocks the health check |
 | `SENTRY_DSN` | no | Blank disables error reporting |
 
 ### State: Neon for vectors, volume for uploads

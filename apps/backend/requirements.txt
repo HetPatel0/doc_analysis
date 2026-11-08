@@ -11,6 +11,7 @@ mistralai==2.4.4
 # Vector Database (Postgres + pgvector on Neon)
 
 psycopg[binary]==3.3.6
+psycopg-pool==3.3.3
 pgvector==0.5.1
 
 # Document loading (OCR fallback uses Mistral OCR or tesseract binaries)

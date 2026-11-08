@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import re
 import shutil
+import time
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -12,6 +14,8 @@ from app.observability import capture_exception
 from app.schemas import DocumentStatusResponse
 from app.services import chunking, insights, ocr, retrieval
 from app.services.store import get_store
+
+logger = logging.getLogger(__name__)
 
 
 def get_legacy_vectorstore_path(document_id: str) -> Path:
@@ -121,15 +125,24 @@ def _embed_chunks(texts: list[str]) -> list[list[float]]:
 
 
 def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
+    started = time.perf_counter()
     write_document_status(document_id, file_name=file_name, status="indexing")
 
+    load_seconds = ocr_seconds = chunk_seconds = 0.0
+    embed_seconds = store_seconds = 0.0
+    chunks: list = []
+    ocr_used = False
+    ocr_provider: str | None = None
+
     try:
+        step = time.perf_counter()
         docs, page_count = _load_text_pages(upload_path)
-        ocr_used = False
-        ocr_provider = None
+        load_seconds = time.perf_counter() - step
 
         if settings.ocr_provider != "off" and ocr.needs_ocr(docs, page_count):
+            step = time.perf_counter()
             result = ocr.ocr_pdf(upload_path, file_name)
+            ocr_seconds = time.perf_counter() - step
             if result.chars > sum(len(doc.page_content.strip()) for doc in docs):
                 docs = result.documents
                 ocr_used = True
@@ -138,7 +151,9 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
         if not docs:
             raise ValueError("The PDF did not contain readable pages.")
 
+        step = time.perf_counter()
         chunks = chunking.split_documents(docs)
+        chunk_seconds = time.perf_counter() - step
 
         if not chunks:
             raise ValueError("The PDF did not contain enough readable text to index.")
@@ -157,11 +172,17 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
                 }
             )
 
+        step = time.perf_counter()
         embeddings = _embed_chunks([chunk.page_content for chunk in chunks])
+        embed_seconds = time.perf_counter() - step
+
+        step = time.perf_counter()
         get_store().replace_chunks(document_id, chunks, embeddings)
+        store_seconds = time.perf_counter() - step
 
-        document_insights = insights.generate_insights(chunks)
-
+        # Chunks are searchable as soon as they are stored. Insights are a
+        # second LLM call and must not hold chat (or the PDF preview) hostage,
+        # so mark the document ready now and patch the insights in afterwards.
         write_document_status(
             document_id,
             file_name=file_name,
@@ -169,7 +190,6 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
             chunks_indexed=len(chunks),
             ocr_used=ocr_used,
             ocr_provider=ocr_provider,
-            **document_insights,
         )
     except Exception as exc:
         capture_exception(exc)
@@ -179,3 +199,60 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
             status="failed",
             error=str(exc),
         )
+        logger.info(
+            "index %s failed in %.2fs after load=%.2fs ocr=%.2fs chunk=%.2fs "
+            "embed=%.2fs store=%.2fs: %s",
+            document_id,
+            time.perf_counter() - started,
+            load_seconds,
+            ocr_seconds,
+            chunk_seconds,
+            embed_seconds,
+            store_seconds,
+            exc,
+        )
+        return
+
+    # Best-effort enrichment. A failure here (including the status patch) must
+    # never turn a searchable document into a failed one.
+    insights_seconds = 0.0
+    step = time.perf_counter()
+    try:
+        document_insights = insights.generate_insights(chunks)
+    except Exception as exc:
+        capture_exception(exc)
+        document_insights = dict(insights.EMPTY_INSIGHTS)
+    insights_seconds = time.perf_counter() - step
+
+    has_insights = any(
+        document_insights.get(key)
+        for key in ("summary", "key_points", "action_items", "quiz")
+    )
+    if has_insights:
+        try:
+            write_document_status(
+                document_id,
+                file_name=file_name,
+                status="ready",
+                chunks_indexed=len(chunks),
+                ocr_used=ocr_used,
+                ocr_provider=ocr_provider,
+                **document_insights,
+            )
+        except Exception as exc:
+            capture_exception(exc)
+
+    logger.info(
+        "index %s ready in %.2fs (load=%.2fs ocr=%.2fs chunk=%.2fs embed=%.2fs "
+        "store=%.2fs insights=%.2fs, chunks=%d, ocr=%s)",
+        document_id,
+        time.perf_counter() - started,
+        load_seconds,
+        ocr_seconds,
+        chunk_seconds,
+        embed_seconds,
+        store_seconds,
+        insights_seconds,
+        len(chunks),
+        ocr_provider or "no",
+    )

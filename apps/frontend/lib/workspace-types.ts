@@ -31,6 +31,21 @@ export type DocumentSummary = {
   quiz?: QuizQuestion[];
 };
 
+export function hasDocumentInsights(
+  document: DocumentSummary | null
+): boolean {
+  if (!document) {
+    return false;
+  }
+
+  return (
+    Boolean(document.summary) ||
+    (document.keyPoints?.length ?? 0) > 0 ||
+    (document.actionItems?.length ?? 0) > 0 ||
+    (document.quiz?.length ?? 0) > 0
+  );
+}
+
 export type WorkspaceState = {
   viewer: ViewerState;
   limits: {

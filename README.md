@@ -198,7 +198,7 @@ Recommended backend keys:
 - `RAG_CHUNK_STRATEGY`: `recursive` (default, size-based) or `semantic` (topic-boundary sentence grouping). Switching strategies requires a reindex.
 - `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP` / `RAG_CHUNK_MIN_CHARS`: Hard cap, overlap, and minimum chunk size.
 - `RAG_CHUNK_SEMANTIC_PERCENTILE` / `RAG_CHUNK_SEMANTIC_MIN_DISTANCE`: Semantic breakpoint threshold (default 95th percentile, minimum cosine distance 0.10).
-- `BOOKIFY_WARM_ON_STARTUP`: Whether to warm dependencies on startup. Set `false` on Railway so health checks pass quickly.
+- `BOOKIFY_WARM_ON_STARTUP`: Whether to warm the indexing/embedding stack. Warming runs in a background thread, so it no longer blocks the health check.
 - `OCR_PROVIDER`: OCR fallback for scanned PDFs: `auto` (local tesseract, then Mistral OCR), `mistral`, `tesseract`, or `off`.
 - `OCR_MIN_CHARS_PER_PAGE`: Text-density threshold below which a page is treated as a scan. Default `100`.
 - `OCR_MAX_PAGES`: Safety/cost cap on OCR pages. Default `40`.
@@ -251,6 +251,29 @@ cd apps/backend
 See [apps/backend/RAG.md](apps/backend/RAG.md) for the golden set, scoring, and
 the current baseline. CI runs the offline checks on every push and PR
 (`.github/workflows/ci.yml`); the eval is a manual workflow.
+
+## Latency notes
+
+The hot paths are deliberately decoupled from optional work:
+
+- **Upload → chat/PDF preview.** Indexing writes `ready` as soon as chunks are
+  stored. Summary/key-points/quiz generation runs afterwards and patches the
+  same document, so chat and the PDF preview no longer wait on a second LLM
+  call. The viewer can open queued/indexing documents because the uploaded file
+  exists before indexing starts.
+- **PDF loading.** The Next.js file route forwards `Range`/`If-Range` and
+  preserves the backend's `206`/`416` response, so PDF.js renders the first
+  page from a byte range instead of downloading the whole file through Vercel.
+- **First chat token.** Query rewriting only runs when there is usable
+  conversation history, the user message/counter writes run in parallel, scoped
+  routes skip loading the document library, and the backend reuses a psycopg
+  connection pool.
+- **Warm-up.** `BOOKIFY_WARM_ON_STARTUP=true` now warms imports and the
+  tokenizer in a background thread, so the health check is not blocked.
+
+The backend logs timings for every index and retrieval:
+`index <id> ready in ...` and
+`chat <id> retrieval rewrite=... embed=... search=...`.
 
 ## Deployment Notes
 

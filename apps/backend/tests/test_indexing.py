@@ -209,7 +209,7 @@ def test_empty_pdf_with_ocr_off_fails_with_readable_pages_error(monkeypatch, tmp
     assert "readable pages" in result["error"]
 
 
-def test_indexing_failure_preserves_file_name(monkeypatch, tmp_path):
+def test_insights_failure_keeps_document_ready(monkeypatch, tmp_path):
     from app.config import settings
 
     install_fake_indexing(monkeypatch, ["x" * 400])
@@ -225,9 +225,67 @@ def test_indexing_failure_preserves_file_name(monkeypatch, tmp_path):
     documents.index_pdf("doc7", "ok.pdf", upload)
 
     result = status("doc7")
-    assert result["status"] == "failed"
+    assert result["status"] == "ready"
     assert result["file_name"] == "ok.pdf"
-    assert "llm down" in result["error"]
+    assert result["chunks_indexed"] > 0
+    assert result["summary"] is None
+
+
+def test_ready_is_written_before_insights(monkeypatch, tmp_path):
+    install_fake_indexing(monkeypatch, ["x" * 400])
+    writes: list[str] = []
+    original_write = documents.write_document_status
+    original_insights = documents.insights.generate_insights
+
+    def spy_write(document_id, **kwargs):
+        writes.append(kwargs.get("status", ""))
+        return original_write(document_id, **kwargs)
+
+    def spy_insights(chunks):
+        assert "ready" in writes, "chat must be enabled before insights run"
+        return original_insights(chunks)
+
+    monkeypatch.setattr(documents, "write_document_status", spy_write)
+    monkeypatch.setattr(documents.insights, "generate_insights", spy_insights)
+
+    upload = tmp_path / "fast.pdf"
+    upload.write_bytes(b"%PDF-1.4")
+    documents.index_pdf("doc-fast", "fast.pdf", upload)
+
+    assert status("doc-fast")["status"] == "ready"
+    assert writes[:2] == ["indexing", "ready"]
+
+
+def test_insights_are_patched_in_after_ready(monkeypatch, tmp_path):
+    install_fake_indexing(monkeypatch, ["x" * 400])
+    writes: list[str] = []
+    original_write = documents.write_document_status
+
+    def spy_write(document_id, **kwargs):
+        writes.append(kwargs.get("status", ""))
+        return original_write(document_id, **kwargs)
+
+    monkeypatch.setattr(documents, "write_document_status", spy_write)
+    monkeypatch.setattr(
+        documents.insights,
+        "generate_insights",
+        lambda chunks: {
+            "summary": "A short summary.",
+            "key_points": ["one point"],
+            "action_items": [],
+            "quiz": [],
+        },
+    )
+
+    upload = tmp_path / "insights.pdf"
+    upload.write_bytes(b"%PDF-1.4")
+    documents.index_pdf("doc-insights", "insights.pdf", upload)
+
+    result = status("doc-insights")
+    assert result["status"] == "ready"
+    assert result["summary"] == "A short summary."
+    assert result["key_points"] == ["one point"]
+    assert writes == ["indexing", "ready", "ready"]
 
 
 def test_large_page_is_split_into_multiple_chunks(monkeypatch, tmp_path):

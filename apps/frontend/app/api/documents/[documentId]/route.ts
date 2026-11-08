@@ -14,7 +14,7 @@ export async function GET(
   context: { params: Promise<{ documentId: string }> }
 ) {
   try {
-    const actor = await resolveActor(request);
+    const actor = await resolveActor(request, { withWorkspace: false });
     const { documentId } = await context.params;
     const response = NextResponse.json(
       await syncDocumentStatus(actor, documentId)
@@ -36,7 +36,7 @@ export async function DELETE(
   context: { params: Promise<{ documentId: string }> }
 ) {
   try {
-    const actor = await resolveActor(request);
+    const actor = await resolveActor(request, { withWorkspace: false });
     const { documentId } = await context.params;
     await deleteDocumentForActor(actor, documentId);
     return applyActorCookies(

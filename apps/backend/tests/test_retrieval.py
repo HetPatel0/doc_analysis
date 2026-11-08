@@ -170,9 +170,9 @@ def test_should_rewrite_skips_call_for_concrete_question_without_history():
     assert r.should_rewrite_query(request) is False
 
 
-def test_should_rewrite_follow_up_without_history_or_any_question_with_history():
+def test_should_rewrite_needs_history():
     follow_up = ChatRequest(document_id="doc", message="and the price?")
-    assert r.should_rewrite_query(follow_up) is True
+    assert r.should_rewrite_query(follow_up) is False
 
     with_history = ChatRequest(
         document_id="doc",

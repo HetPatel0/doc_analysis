@@ -6,6 +6,9 @@
 > Status: Phases 0, 1, 2, and 2.5 are done. In Phase 3, OCR (3.2), pgvector
 > storage (3.1), hybrid retrieval + query rewriting (3.3), the eval harness
 > (3.5), and semantic chunking (3.4) are done; extra formats (3.6) are next.
+> A latency pass (2026-11-08) made `ready` available before insights, opened
+> PDF previews during indexing, forwarded byte ranges, and pooled backend DB
+> connections.
 
 ## Current pain points (why this order)
 

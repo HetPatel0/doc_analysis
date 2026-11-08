@@ -17,7 +17,11 @@ import { authClient } from "@/lib/auth-client";
 import { toErrorMessage } from "@/lib/errors";
 import { uploadPdfWithProgress, validatePdfFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
-import { GUEST_CHAT_LIMIT, type DocumentSummary } from "@/lib/workspace-types";
+import {
+  GUEST_CHAT_LIMIT,
+  hasDocumentInsights,
+  type DocumentSummary,
+} from "@/lib/workspace-types";
 
 import { AuthForm, type AuthMode } from "@/components/auth-form";
 import { ChatMessage } from "@/components/chat-message";
@@ -150,17 +154,38 @@ export default function PdfChatShell() {
 
     async function loadDocumentDetails() {
       try {
-        const response = await fetch(`/api/documents/${activeDocumentId}`, {
-          cache: "no-store",
-        });
-        const result =
-          ((await response.json()) as DocumentSummary & ErrorResponse) ?? {};
+        // `ready` is written before the optional insights call, so keep
+        // re-fetching for a short window instead of blocking chat on it.
+        for (let attempt = 0; attempt < 15; attempt += 1) {
+          const response = await fetch(`/api/documents/${activeDocumentId}`, {
+            cache: "no-store",
+          });
+          const result =
+            ((await response.json()) as DocumentSummary & ErrorResponse) ?? {};
 
-        if (!cancelled && response.ok && result.documentId) {
+          if (cancelled) {
+            return;
+          }
+
+          if (!response.ok || !result.documentId) {
+            detailsFetchedRef.current = null;
+            return;
+          }
+
           setDocument(result);
-        } else if (!cancelled) {
-          detailsFetchedRef.current = null;
+
+          if (hasDocumentInsights(result)) {
+            return;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          if (cancelled) {
+            return;
+          }
         }
+
+        // No insights after the retry window: let a later event try again.
+        detailsFetchedRef.current = null;
       } catch {
         // Insights are optional; keep the chat usable if this fails.
         if (!cancelled) {

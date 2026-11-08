@@ -12,20 +12,51 @@ type RouteContext = { params: Promise<{ documentId: string }> };
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const actor = await resolveActor(request);
+    const actor = await resolveActor(request, { withWorkspace: false });
     const { documentId } = await context.params;
-    const file = await getDocumentFileForActor(actor, documentId);
+    const file = await getDocumentFileForActor(
+      actor,
+      documentId,
+      request.headers.get("range"),
+      request.headers.get("if-range")
+    );
 
-    const headers = new Headers({
-      "Content-Type": "application/pdf",
-      "Content-Disposition": "inline",
-      "Cache-Control": "private, max-age=3600",
-    });
-    if (file.contentLength) {
-      headers.set("Content-Length", file.contentLength);
+    const headers = new Headers();
+    for (const name of [
+      "content-type",
+      "content-length",
+      "content-range",
+      "accept-ranges",
+      "content-disposition",
+      "etag",
+      "last-modified",
+      "cache-control",
+    ]) {
+      const value = file.headers.get(name);
+      if (value) {
+        headers.set(name, value);
+      }
     }
 
-    return applyActorCookies(actor, new NextResponse(file.body, { headers }));
+    // Preserve the upstream 206/416 status and range headers so PDF.js can
+    // stream the first pages instead of downloading the whole file.
+    if (!headers.has("content-type")) {
+      headers.set("content-type", "application/pdf");
+    }
+    if (!headers.has("content-disposition")) {
+      headers.set("content-disposition", "inline");
+    }
+    if (!headers.has("accept-ranges")) {
+      headers.set("accept-ranges", "bytes");
+    }
+    if (!headers.has("cache-control")) {
+      headers.set("cache-control", "private, max-age=3600");
+    }
+
+    return applyActorCookies(
+      actor,
+      new NextResponse(file.body, { status: file.status, headers })
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Could not load the PDF.";

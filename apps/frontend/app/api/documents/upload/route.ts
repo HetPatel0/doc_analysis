@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const actor = await resolveActor(request);
+    const actor = await resolveActor(request, { withWorkspace: false });
     const formData = await request.formData();
     const file = formData.get("file");
 

@@ -72,6 +72,11 @@ def _encoding() -> Any:
     return tiktoken.get_encoding("gpt2")
 
 
+def warm() -> None:
+    """Load the tokenizer ahead of the first upload (its vocab may be fetched)."""
+    _encoding()
+
+
 def _token_length(text: str) -> int:
     return len(_encoding().encode(text))
 

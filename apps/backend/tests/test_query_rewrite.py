@@ -103,19 +103,17 @@ def test_concrete_question_without_history_skips_the_extra_call(
     assert FakePrompt.calls == []
 
 
-def test_follow_up_without_history_still_rewrites(rewrite_deps, monkeypatch):
+def test_follow_up_without_history_uses_fallback(rewrite_deps, monkeypatch):
     monkeypatch.setattr(
         query_rewrite.deps,
         "get_llm",
-        lambda: type(
-            "L", (), {"invoke": lambda self, prompt: FakeResponse("Starter plan price")}
-        )(),
+        lambda: pytest.fail("rewrite model must not be called without history"),
     )
 
     result = query_rewrite.rewrite_query(request("and the price?", []))
 
-    assert result == "Starter plan price"
-    assert FakePrompt.calls[0]["question"] == "and the price?"
+    assert result == "and the price?"
+    assert FakePrompt.calls == []
 
 
 def test_rewrite_uses_history_and_cleans_model_output(rewrite_deps, monkeypatch):

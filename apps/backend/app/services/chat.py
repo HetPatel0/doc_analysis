@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 from app import dependencies as deps
@@ -7,6 +9,8 @@ from app.config import settings
 from app.schemas import ChatRequest
 from app.services import documents, query_rewrite, retrieval
 from app.services.store import get_store
+
+logger = logging.getLogger(__name__)
 
 
 def retrieve(request: ChatRequest) -> tuple[list[Any], list[dict[str, Any]]]:
@@ -34,21 +38,36 @@ def retrieve_with_query(
     """
     documents.ensure_document_exists(request.document_id)
 
+    step = time.perf_counter()
     retrieval_query = query_rewrite.rewrite_query(request)
+    rewrite_seconds = time.perf_counter() - step
+
     # Pure similarity keeps a meaningful dense rank for reciprocal rank fusion.
     # MMR's diversity objective is now handled by the lexical signal + dedupe,
     # and MMR cannot expose the ranking RRF needs.
     candidate_k = max(settings.retrieval_fetch_k * 2, 20)
+    step = time.perf_counter()
     query_embedding = deps.get_embedding_model().embed_query(retrieval_query)
+    embed_seconds = time.perf_counter() - step
+    step = time.perf_counter()
     retrieved_docs = get_store().similarity_search(
         request.document_id, query_embedding, candidate_k
     )
+    search_seconds = time.perf_counter() - step
 
     docs = retrieval.rerank_documents(
         retrieved_docs,
         retrieval_query,
         settings.retrieval_top_k,
         rrf_k=settings.retrieval_rrf_k,
+    )
+    logger.info(
+        "chat %s retrieval rewrite=%.3fs embed=%.3fs search=%.3fs candidates=%d",
+        request.document_id,
+        rewrite_seconds,
+        embed_seconds,
+        search_seconds,
+        len(retrieved_docs),
     )
     return docs, retrieval.build_citations(docs), retrieval_query
 

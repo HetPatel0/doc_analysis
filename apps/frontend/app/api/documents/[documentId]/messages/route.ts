@@ -13,7 +13,7 @@ type RouteContext = { params: Promise<{ documentId: string }> };
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const actor = await resolveActor(request);
+    const actor = await resolveActor(request, { withWorkspace: false });
     const { documentId } = await context.params;
     const response = NextResponse.json({
       messages: await listMessagesForActor(actor, documentId),
@@ -30,7 +30,7 @@ export async function GET(request: Request, context: RouteContext) {
 
 export async function POST(request: Request, context: RouteContext) {
   try {
-    const actor = await resolveActor(request);
+    const actor = await resolveActor(request, { withWorkspace: false });
     const { documentId } = await context.params;
     const body = (await request.json()) as {
       role?: string;

@@ -40,6 +40,15 @@ export type ActorContext = {
   shouldSetGuestCookie: boolean;
 };
 
+type ResolveActorOptions = {
+  /**
+   * Workspace snapshots need the active document and full library. Scoped
+   * routes (chat, file, status, messages) only need identity and usage, so
+   * skipping these two queries removes round-trips from the hot path.
+   */
+  withWorkspace?: boolean;
+};
+
 type BackendStatusResponse = {
   document_id: string;
   file_name: string;
@@ -274,7 +283,11 @@ async function claimGuestResources(guestId: string, userId: string) {
     .where(and(eq(documents.ownerType, "guest"), eq(documents.ownerId, guestId)));
 }
 
-export async function resolveActor(request: Request): Promise<ActorContext> {
+export async function resolveActor(
+  request: Request,
+  options: ResolveActorOptions = {}
+): Promise<ActorContext> {
+  const withWorkspace = options.withWorkspace ?? true;
   const session = await auth.api.getSession({ headers: request.headers });
   const cookieStore = await cookies();
   const guestCookie = cookieStore.get(GUEST_COOKIE_NAME)?.value ?? null;
@@ -286,12 +299,12 @@ export async function resolveActor(request: Request): Promise<ActorContext> {
     }
 
     const usage = await ensureUsage("user", session.user.id);
-    const activeDocument = await resolveActiveDocument(
-      "user",
-      session.user.id,
-      usage
-    );
-    const documentList = await listDocuments("user", session.user.id);
+    const activeDocument = withWorkspace
+      ? await resolveActiveDocument("user", session.user.id, usage)
+      : null;
+    const documentList = withWorkspace
+      ? await listDocuments("user", session.user.id)
+      : [];
 
     return {
       type: "user",
@@ -323,12 +336,12 @@ export async function resolveActor(request: Request): Promise<ActorContext> {
   }
 
   const usage = await ensureUsage("guest", resolvedGuestId, fingerprintHash);
-  const activeDocument = await resolveActiveDocument(
-    "guest",
-    resolvedGuestId,
-    usage
-  );
-  const documentList = await listDocuments("guest", resolvedGuestId);
+  const activeDocument = withWorkspace
+    ? await resolveActiveDocument("guest", resolvedGuestId, usage)
+    : null;
+  const documentList = withWorkspace
+    ? await listDocuments("guest", resolvedGuestId)
+    : [];
 
   return {
     type: "guest",
@@ -651,32 +664,34 @@ export async function streamChatForActor(
     throw new Error(result?.detail ?? "Chat request failed.");
   }
 
-  await db.insert(messages).values({
-    documentId,
-    role: "user",
-    content: trimmedMessage.slice(0, MAX_MESSAGE_CHARS),
-  });
-
-  await db
-    .update(usageSubjects)
-    .set({
-      chatCount: sql`${usageSubjects.chatCount} + 1`,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(usageSubjects.ownerType, actor.type),
-        eq(usageSubjects.ownerId, actor.ownerId)
-      )
-    );
-
-  await db
-    .update(documents)
-    .set({
-      chatsUsed: sql`${documents.chatsUsed} + 1`,
-      updatedAt: new Date(),
-    })
-    .where(eq(documents.documentId, documentId));
+  // These three writes are independent; run them together so they do not add
+  // three sequential Neon round-trips before the first streamed token.
+  await Promise.all([
+    db.insert(messages).values({
+      documentId,
+      role: "user",
+      content: trimmedMessage.slice(0, MAX_MESSAGE_CHARS),
+    }),
+    db
+      .update(usageSubjects)
+      .set({
+        chatCount: sql`${usageSubjects.chatCount} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(usageSubjects.ownerType, actor.type),
+          eq(usageSubjects.ownerId, actor.ownerId)
+        )
+      ),
+    db
+      .update(documents)
+      .set({
+        chatsUsed: sql`${documents.chatsUsed} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(documents.documentId, documentId)),
+  ]);
 
   // The backend streams SSE tokens, so the answer only exists on the wire.
   // Tee the stream and persist the assembled assistant message when it ends.
@@ -777,18 +792,29 @@ export async function syncDocumentStatus(
 
 export type DocumentFile = {
   body: ReadableStream<Uint8Array>;
-  contentLength: string | null;
+  status: number;
+  headers: Headers;
 };
 
 export async function getDocumentFileForActor(
   actor: ActorContext,
-  documentId: string
+  documentId: string,
+  range?: string | null,
+  ifRange?: string | null
 ): Promise<DocumentFile> {
   await assertDocumentOwnership(actor, documentId);
 
   const headers = new Headers();
   if (BACKEND_API_SECRET) {
     headers.set("X-Bookify-Secret", BACKEND_API_SECRET);
+  }
+  // PDF.js asks for byte ranges so it can render page 1 before the whole file
+  // arrives. The backend supports 206 responses; the proxy has to ask for one.
+  if (range) {
+    headers.set("Range", range);
+  }
+  if (ifRange) {
+    headers.set("If-Range", ifRange);
   }
 
   let backendResponse: Response;
@@ -803,6 +829,15 @@ export async function getDocumentFileForActor(
     );
   }
 
+  // 416 is a valid range answer; forward it so PDF.js can recover.
+  if (backendResponse.status === 416) {
+    return {
+      body: backendResponse.body ?? new ReadableStream<Uint8Array>(),
+      status: 416,
+      headers: backendResponse.headers,
+    };
+  }
+
   if (!backendResponse.ok || !backendResponse.body) {
     const result = (await backendResponse.json().catch(() => null)) as {
       detail?: string;
@@ -812,7 +847,8 @@ export async function getDocumentFileForActor(
 
   return {
     body: backendResponse.body,
-    contentLength: backendResponse.headers.get("content-length"),
+    status: backendResponse.status,
+    headers: backendResponse.headers,
   };
 }
 

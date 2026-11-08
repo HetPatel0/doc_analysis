@@ -150,22 +150,25 @@ export function DocumentPanel({
             tab === "pdf" ? "flex" : "hidden"
           )}
         >
-          {document.status === "ready" ? (
+          {/*
+           * The uploaded file exists as soon as the backend accepts it, so the
+           * PDF can open while indexing continues. Only a failed document has
+           * no useful preview.
+           */}
+          {document.status === "failed" ? (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+              <LoaderCircle className="size-4 text-muted-foreground/60" />
+              <p className="text-[12px] text-muted-foreground">
+                This document could not be indexed.
+              </p>
+            </div>
+          ) : (
             <PdfViewer
               key={document.documentId}
               fileUrl={`/api/documents/${document.documentId}/file`}
               page={page}
               onPageChange={onPageChange}
             />
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-              <LoaderCircle className="size-4 animate-spin text-muted-foreground/60" />
-              <p className="text-[12px] text-muted-foreground">
-                {document.status === "failed"
-                  ? "This document could not be indexed."
-                  : "Preparing the PDF preview…"}
-              </p>
-            </div>
           )}
         </div>
 

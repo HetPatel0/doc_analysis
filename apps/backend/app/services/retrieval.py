@@ -428,9 +428,13 @@ def is_concrete_question(message: str) -> bool:
 
 
 def should_rewrite_query(request: ChatRequest) -> bool:
-    if useful_history(request.history):
-        return True
-    return not is_concrete_question(request.message)
+    """Rewrite only when earlier turns give the model something to resolve.
+
+    Without history a rewrite cannot resolve a reference, so the extra LLM call
+    is pure latency. This used to fire for anaphoric first questions such as
+    "Summarize this PDF" even though there was nothing to rewrite against.
+    """
+    return useful_history(request.history)
 
 
 def with_source_footer(answer: Any, sources: list[str]) -> str:
