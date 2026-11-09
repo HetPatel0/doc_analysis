@@ -33,6 +33,8 @@ function mergeDocumentDetails(
 
   return {
     ...next,
+    sourceKind: next.sourceKind ?? current.sourceKind,
+    mimeType: next.mimeType ?? current.mimeType,
     summary: next.summary ?? current.summary,
     keyPoints:
       (next.keyPoints?.length ?? 0) > 0 ? next.keyPoints : current.keyPoints,

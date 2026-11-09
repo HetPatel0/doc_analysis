@@ -9,7 +9,7 @@ Topology:
 | Database (Postgres) | Neon | — |
 
 The frontend owns auth, guest limits, document rows, and messages. The backend
-owns PDF files, the vector index (Postgres + pgvector), and generation. They
+owns document files, the vector index (Postgres + pgvector), and generation. They
 talk over `BACKEND_API_URL` with a shared secret header. Both services use the
 same Neon database; the backend only touches `document_index` and
 `document_chunk`.
@@ -42,6 +42,10 @@ back to `python3` (containers, Railway). It binds `0.0.0.0:$PORT` and honours
 | `RAG_*` | no | Chunking (`RAG_CHUNK_STRATEGY=recursive` default, `semantic` opt-in), size/overlap, fetch-k, top-k. Switching chunk strategy requires a reindex |
 | `OCR_PROVIDER` | no | `auto` (default), `mistral`, `tesseract`, `off` |
 | `OCR_MAX_PAGES` | no | Cost guard; default 40 |
+| `BOOKIFY_URL_IMPORT` | no | Enables URL import; default `true`. Requires outbound HTTPS |
+| `BOOKIFY_URL_IMPORT_TIMEOUT` | no | Fetch timeout in seconds; default 10 |
+| `BOOKIFY_URL_IMPORT_MAX_REDIRECTS` | no | Redirects followed per import; default 3 |
+| `BOOKIFY_URL_IMPORT_MAX_MB` | no | Downloaded page size cap; default 5 |
 | `BOOKIFY_WARM_ON_STARTUP` | no | Warms imports + tiktoken in a background thread; safe to leave enabled because it no longer blocks the health check |
 | `BOOKIFY_INDEX_STALE_SECONDS` | no | Documents stuck in `queued`/`indexing` longer than this are `stalled` and retryable; default 900 |
 | `SENTRY_DSN` | no | Blank disables error reporting |
@@ -51,15 +55,16 @@ back to `python3` (containers, Railway). It binds `0.0.0.0:$PORT` and honours
 Since Phase 3.1 the backend keeps its index in Postgres:
 
 ```
-Neon: document_index   <- status, chunk count, insights (queued/indexing/ready/failed)
+Neon: document_index   <- status, source_kind/mime_type, chunk count, insights
 Neon: document_chunk   <- chunk text + vector(1024) embedding, HNSW cosine index
-$BOOKIFY_STORAGE_DIR/uploads/  <- original PDFs (served by /documents/{id}/file)
+$BOOKIFY_STORAGE_DIR/uploads/  <- original PDF/DOCX/TXT/MD files and imported URL text
 ```
 
 The tables and the `vector` extension are created lazily on first use, so a
-fresh database needs no migration step. Mount a Railway volume at `/data` and
-set `BOOKIFY_STORAGE_DIR=/data` so uploads survive redeploys; the vector index
-no longer depends on it.
+fresh database needs no migration step. Additive columns (`source_kind`,
+`mime_type`, `start_index`) are added in place on first use. Mount a Railway
+volume at `/data` and set `BOOKIFY_STORAGE_DIR=/data` so uploads survive
+redeploys; the vector index no longer depends on it.
 
 Documents indexed before 3.1 only exist as Chroma directories on the old
 volume. Re-index them from the stored PDFs after deploying:
@@ -96,6 +101,16 @@ deploys to wait for the vector store (`select 1`) to answer.
 - `OCR_MAX_PAGES` caps both engines; raise it deliberately for long scans.
 - OCR only runs when the text layer is thinner than
   `OCR_MIN_CHARS_PER_PAGE × pages`, so normal PDFs are unaffected.
+
+### URL import
+
+`POST /import/url` fetches a single page. The backend resolves DNS and rejects
+private, loopback, link-local, and metadata addresses (each redirect hop is
+re-checked), follows at most `BOOKIFY_URL_IMPORT_MAX_REDIRECTS`, and caps the
+download at `BOOKIFY_URL_IMPORT_MAX_MB`. Only HTML and plain text are accepted;
+the extracted text is stored as a `.txt` upload with `source_kind="url"` and
+indexed like any other document. Railway therefore needs outbound HTTPS. Set
+`BOOKIFY_URL_IMPORT=false` to disable the endpoint entirely.
 
 ## Frontend (Vercel)
 
@@ -140,12 +155,16 @@ index on first connection. The database user must be allowed to
 2. Frontend env set, `BACKEND_API_SECRET` identical to the backend secret.
 3. Migrations applied (frontend Drizzle; backend tables self-create).
 4. `GET /health` returns 200 from the public backend URL.
-5. Upload a PDF → status goes `queued → indexing → ready`.
-6. Ask a question → tokens stream, citations resolve to pages.
-7. `curl -H "X-Bookify-Secret: wrong" $BACKEND/documents/x` returns 401.
-8. Redeploy the backend and confirm the document still opens (uploads volume +
+5. Upload a document (`PDF`, `DOCX`, `TXT`, or `MD`) → status goes
+   `queued → indexing → ready`.
+6. Ask a question → tokens stream, citations resolve to pages (PDF) or chunks
+   (text).
+7. Import `https://example.com` from the sidebar → it becomes a text document;
+   a private URL such as `http://127.0.0.1` is rejected.
+8. `curl -H "X-Bookify-Secret: wrong" $BACKEND/documents/x` returns 401.
+9. Redeploy the backend and confirm the document still opens (uploads volume +
    Neon index).
-9. Run `scripts/reindex_documents.py` once for documents uploaded before 3.1.
+10. Run `scripts/reindex_documents.py` once for documents uploaded before 3.1.
 
 ## CI and evals
 
@@ -158,8 +177,10 @@ index on first connection. The database user must be allowed to
 
 ## Known deploy gaps (after Phase 3.1)
 
-- Uploaded PDFs still live on the volume; there is no object storage or
+- Uploaded files still live on the volume; there is no object storage or
   signed-URL access. This is the remaining reason for a single replica.
+- URL import fetches one page per request; there is no crawling, sitemap, or
+  authenticated-page support.
 - The embedding dimension is fixed at `RAG_EMBEDDING_DIM` (1024). Switching
   embedding models with a different size needs a schema change plus a reindex.
 - Background indexing runs in-process (FastAPI `BackgroundTasks`), so a restart

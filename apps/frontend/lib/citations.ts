@@ -1,6 +1,6 @@
 import type { Citation } from "@/lib/workspace-types";
 
-const SOURCE_TOKEN = /^(?:p\.\s*\d+|chunk\s*\d+|document)$/i;
+const SOURCE_LABEL = /p\.\s*\d+(?:\s*,\s*chunk\s*\d+)?|chunk\s*\d+|document/gi;
 
 export function citationsFromSources(sources: string[]): Citation[] {
   const citations: Citation[] = [];
@@ -28,6 +28,10 @@ export function citationsFromSources(sources: string[]): Citation[] {
 /**
  * The backend appends a plain "Sources: p. 3, chunk 2" footer when the model
  * did not cite inline. Split it out so the UI can render clickable chips.
+ *
+ * Source labels themselves contain commas ("p. 3, chunk 2"), so parse with the
+ * label grammar instead of splitting on commas; that also keeps text-only
+ * labels ("chunk 2") clickable.
  */
 export function splitSourceFooter(content: string): {
   body: string;
@@ -38,34 +42,31 @@ export function splitSourceFooter(content: string): {
     return { body: content, citations: [] };
   }
 
-  const tokens = match[1]
-    .split(",")
-    .map((token) => token.trim())
-    .filter(Boolean);
-
-  if (tokens.length === 0 || tokens.some((token) => !SOURCE_TOKEN.test(token))) {
+  const footer = match[1].trim();
+  const leftovers = footer.replace(SOURCE_LABEL, "").replace(/[\s,]+/g, "");
+  if (leftovers) {
     return { body: content, citations: [] };
   }
 
   const citations: Citation[] = [];
   const seen = new Set<string>();
 
-  for (const token of tokens) {
-    if (token.toLowerCase().startsWith("p.")) {
-      const page = Number.parseInt(token.replace(/\D/g, ""), 10);
-      const key = `p.${page}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        citations.push({ label: token, page });
-      }
-    } else if (token.toLowerCase().startsWith("chunk") && citations.length > 0) {
-      const previous = citations[citations.length - 1];
-      previous.label = `${previous.label}, ${token}`;
-      previous.chunk = Number.parseInt(token.replace(/\D/g, ""), 10);
-    } else if (!seen.has(token)) {
-      seen.add(token);
-      citations.push({ label: token, page: null });
+  for (const token of footer.match(SOURCE_LABEL) ?? []) {
+    const label = token.trim();
+    const key = label.toLowerCase();
+    if (seen.has(key)) {
+      continue;
     }
+    seen.add(key);
+
+    const pageMatch = label.match(/p\.\s*(\d+)/i);
+    const chunkMatch = label.match(/chunk\s*(\d+)/i);
+
+    citations.push({
+      label,
+      page: pageMatch ? Number.parseInt(pageMatch[1], 10) : null,
+      chunk: chunkMatch ? Number.parseInt(chunkMatch[1], 10) : null,
+    });
   }
 
   return {

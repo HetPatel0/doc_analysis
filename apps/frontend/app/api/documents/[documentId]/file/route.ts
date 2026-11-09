@@ -41,7 +41,7 @@ export async function GET(request: Request, context: RouteContext) {
     // Preserve the upstream 206/416 status and range headers so PDF.js can
     // stream the first pages instead of downloading the whole file.
     if (!headers.has("content-type")) {
-      headers.set("content-type", "application/pdf");
+      headers.set("content-type", "application/octet-stream");
     }
     if (!headers.has("content-disposition")) {
       headers.set("content-disposition", "inline");
@@ -59,7 +59,7 @@ export async function GET(request: Request, context: RouteContext) {
     );
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Could not load the PDF.";
+      error instanceof Error ? error.message : "Could not load the document.";
     const status = /not found for this workspace/i.test(message) ? 403 : 500;
 
     return NextResponse.json({ detail: message }, { status });

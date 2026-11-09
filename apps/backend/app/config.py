@@ -94,6 +94,17 @@ class Settings:
         os.getenv("BOOKIFY_INDEX_STALE_SECONDS", "900")
     )
 
+    # URL import: a single page, no crawling. The fetch path validates DNS and
+    # every redirect against the SSRF guard in ``services/url_import.py``.
+    url_import_enabled: bool = _flag("BOOKIFY_URL_IMPORT", "true")
+    url_import_timeout_seconds: float = float(
+        os.getenv("BOOKIFY_URL_IMPORT_TIMEOUT", "10")
+    )
+    url_import_max_redirects: int = int(
+        os.getenv("BOOKIFY_URL_IMPORT_MAX_REDIRECTS", "3")
+    )
+    url_import_max_mb: int = int(os.getenv("BOOKIFY_URL_IMPORT_MAX_MB", "5"))
+
     sentry_dsn: str = os.getenv("SENTRY_DSN", "")
     sentry_environment: str = os.getenv("SENTRY_ENVIRONMENT", "production")
     sentry_traces_sample_rate: float = float(

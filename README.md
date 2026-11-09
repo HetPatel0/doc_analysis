@@ -12,7 +12,7 @@ This repository now contains both Bookify applications:
 - Database: Neon Postgres
 
 The frontend owns auth, guest limits, and database writes. The backend handles
-PDF indexing and chat generation.
+document indexing and chat generation.
 
 ## Local Development
 
@@ -174,6 +174,10 @@ BOOKIFY_WARM_ON_STARTUP=true
 OCR_PROVIDER=auto
 OCR_MIN_CHARS_PER_PAGE=100
 OCR_MAX_PAGES=40
+BOOKIFY_URL_IMPORT=true
+BOOKIFY_URL_IMPORT_TIMEOUT=10
+BOOKIFY_URL_IMPORT_MAX_REDIRECTS=3
+BOOKIFY_URL_IMPORT_MAX_MB=5
 SENTRY_DSN=
 SENTRY_ENVIRONMENT=production
 SENTRY_TRACES_SAMPLE_RATE=0.1
@@ -203,6 +207,10 @@ Recommended backend keys:
 - `OCR_PROVIDER`: OCR fallback for scanned PDFs: `auto` (local tesseract, then Mistral OCR), `mistral`, `tesseract`, or `off`.
 - `OCR_MIN_CHARS_PER_PAGE`: Text-density threshold below which a page is treated as a scan. Default `100`.
 - `OCR_MAX_PAGES`: Safety/cost cap on OCR pages. Default `40`.
+- `BOOKIFY_URL_IMPORT`: Enables the URL import endpoint. Default `true`.
+- `BOOKIFY_URL_IMPORT_TIMEOUT`: Fetch timeout in seconds for URL imports. Default `10`.
+- `BOOKIFY_URL_IMPORT_MAX_REDIRECTS`: Redirects followed during a URL import. Default `3`.
+- `BOOKIFY_URL_IMPORT_MAX_MB`: Maximum downloaded page size for URL imports. Default `5`.
 - `SENTRY_DSN`: Optional Sentry DSN for backend error reporting. Leave blank to disable.
 - `SENTRY_ENVIRONMENT`: Sentry environment name. Defaults to `production`.
 - `SENTRY_TRACES_SAMPLE_RATE`: Sentry performance sample rate. Defaults to `0.1`.
@@ -252,6 +260,26 @@ cd apps/backend
 See [apps/backend/RAG.md](apps/backend/RAG.md) for the golden set, scoring, and
 the current baseline. CI runs the offline checks on every push and PR
 (`.github/workflows/ci.yml`); the eval is a manual workflow.
+
+## Supported documents
+
+Uploads are normalised to text before indexing, so chat works the same for every
+format:
+
+- **PDF** — text layer first, with the OCR fallback for scans. Opens in the PDF
+  viewer and citations jump to pages.
+- **DOCX** — paragraphs and table rows (joined with `|`).
+- **TXT / Markdown** — decoded as UTF-8, UTF-16, or Latin-1. Opens in the plain
+  text reader; citations jump to the matching chunk.
+- **URL** — one page, no crawling. The backend fetches `http(s)` pages, rejects
+  private/reserved addresses (including every redirect hop), caps redirects,
+  bytes, and time, then extracts readable text with trafilatura. Imported pages
+  are stored and indexed as text, so they use the text reader too.
+
+Guest limits are unchanged: one document and three chats. URL imports count as
+an upload. Indexed documents expose `source_kind` (`pdf`, `docx`, `txt`, `md`,
+`url`); the frontend derives the kind from the file extension when a workspace
+snapshot predates that field.
 
 ## Latency notes
 

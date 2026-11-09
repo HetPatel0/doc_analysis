@@ -28,10 +28,17 @@ class QuizQuestion(BaseModel):
     answer: str
 
 
+class UrlImportRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
 class DocumentStatusResponse(BaseModel):
     document_id: str
     file_name: str
     status: str
+    # pdf | docx | txt | md | url
+    source_kind: str = "pdf"
+    mime_type: str = "application/pdf"
     chunks_indexed: int | None = None
     error: str | None = None
     summary: str | None = None

@@ -1,7 +1,7 @@
-"""Backfill the pgvector store from PDFs already on disk.
+"""Backfill the pgvector store from documents already on disk.
 
 Phase 3.1 moved chunks out of per-document Chroma directories into Postgres.
-Uploaded PDFs are still on the volume, so an existing deployment can be
+Uploaded documents are still on the volume, so an existing deployment can be
 re-indexed without asking users to upload again.
 
 Usage, from `apps/backend` (needs MISTRAL_API_KEY and DATABASE_URL):
@@ -70,7 +70,7 @@ def main() -> int:
             os.environ.setdefault(key, value)
 
     from app.config import settings
-    from app.services import documents
+    from app.services import documents, loaders
     from app.services.store import get_store
 
     if not settings.database_url and settings.store_backend != "memory":
@@ -85,7 +85,7 @@ def main() -> int:
     ]
 
     if not targets:
-        print("No uploaded PDFs found in", settings.uploads_dir, file=sys.stderr)
+        print("No uploaded documents found in", settings.uploads_dir, file=sys.stderr)
         return 2
 
     store = get_store()
@@ -95,7 +95,20 @@ def main() -> int:
             print(f"would re-index {document_id} ({file_name})")
             continue
         print(f"re-indexing {document_id} ({file_name}) ...", end=" ", flush=True)
-        documents.index_pdf(document_id, file_name, path)
+        status = store.read_status(document_id)
+        kind = (
+            status.get("source_kind")
+            if status
+            else loaders.detect_kind(file_name, None)
+        )
+        kind = loaders.normalize_source_kind(kind)
+        documents.index_document(
+            document_id,
+            file_name,
+            path,
+            kind,
+            loaders.mime_type_for(kind),
+        )
         status = store.read_status(document_id)
         if status and status["status"] == "ready":
             print(f"ok ({status['chunks_indexed']} chunks)")

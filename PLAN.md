@@ -5,7 +5,7 @@
 >
 > Status: Phases 0, 1, 2, and 2.5 are done. In Phase 3, OCR (3.2), pgvector
 > storage (3.1), hybrid retrieval + query rewriting (3.3), the eval harness
-> (3.5), and semantic chunking (3.4) are done; extra formats (3.6) are next.
+> (3.5), semantic chunking (3.4), and multi-format import (3.6) are done.
 > A latency pass (2026-11-08) made `ready` available before insights, opened
 > PDF previews during indexing, forwarded byte ranges, and pooled backend DB
 > connections. A reliability pass added stalled-index detection + retry,
@@ -89,7 +89,7 @@ retrieval tuning, then storage scale.
 | 3.3 | Hybrid retrieval: BM25 + vector + rerank, query-rewrite with history | Naive term-count rerank; eval baseline fails a paraphrase question | ✅ `app/services/retrieval.py`, `query_rewrite.py`, `chat.py` |
 | 3.4 | Chunking experiments: semantic splitter option | Env knobs exist (`RAG_CHUNK_*`); no semantic splitter yet | ✅ `app/services/chunking.py`, `documents.py` |
 | 3.5 | Evals: golden PDF + Q/A set, `pytest` RAG regression | Prevents silent quality drops | ✅ `tests/`, `scripts/rag_eval.py` |
-| 3.6 | Support DOCX/TXT/MD + URL import | PDF-only limits adoption | `app/services/documents.py` |
+| 3.6 | Support DOCX/TXT/MD + URL import | PDF-only limits adoption | ✅ `app/services/loaders.py`, `url_import.py`, `documents.py` |
 
 ## Phase 4 — Growth / monetization (LAST)
 
@@ -109,8 +109,8 @@ Week 1:  0.1 → 0.2 → 0.3 → 0.4 → 0.5
 Week 2:  1.1 → 1.2 → 1.3
 Week 3:  1.4 → 1.5 → 0.6 (refactor while adding sidebar)
 Week 4+: 2.1 → 2.2 → 2.3 → 2.4
-Done:    2.5 → 3.2 → 3.5 → 3.3 → 3.1 → 3.4
-Next:    3.6 → 4.1
+Done:    2.5 → 3.2 → 3.5 → 3.3 → 3.1 → 3.4 → 3.6
+Next:    4.1
 ```
 
 ## What NOT to do yet

@@ -33,6 +33,8 @@ from app.config import settings
 STATUS_FIELDS = (
     "document_id",
     "file_name",
+    "source_kind",
+    "mime_type",
     "status",
     "chunks_indexed",
     "error",
@@ -56,6 +58,8 @@ class Store(Protocol):
         *,
         file_name: str,
         status: str,
+        source_kind: str = "pdf",
+        mime_type: str = "application/pdf",
         chunks_indexed: int | None = None,
         error: str | None = None,
         summary: str | None = None,
@@ -84,6 +88,8 @@ class Store(Protocol):
 
     def count_chunks(self, document_id: str) -> int: ...
 
+    def list_chunks(self, document_id: str) -> list[dict[str, Any]]: ...
+
     def delete_document(self, document_id: str) -> None: ...
 
 
@@ -92,6 +98,8 @@ def _status_row(
     *,
     file_name: str,
     status: str,
+    source_kind: str = "pdf",
+    mime_type: str = "application/pdf",
     chunks_indexed: int | None = None,
     error: str | None = None,
     summary: str | None = None,
@@ -105,6 +113,8 @@ def _status_row(
     return {
         "document_id": document_id,
         "file_name": file_name,
+        "source_kind": source_kind,
+        "mime_type": mime_type,
         "status": status,
         "chunks_indexed": chunks_indexed,
         "error": error,
@@ -219,6 +229,8 @@ class PostgresStore:
                     create table if not exists document_index (
                         document_id text primary key,
                         file_name text not null,
+                        source_kind text not null default 'pdf',
+                        mime_type text not null default 'application/pdf',
                         status text not null,
                         chunks_indexed integer,
                         error text,
@@ -241,6 +253,21 @@ class PostgresStore:
                         text not null default 'pending'
                     """
                 )
+                # Multi-format uploads (3.6) add the source kind and MIME type.
+                cur.execute(
+                    """
+                    alter table document_index
+                        add column if not exists source_kind
+                        text not null default 'pdf'
+                    """
+                )
+                cur.execute(
+                    """
+                    alter table document_index
+                        add column if not exists mime_type
+                        text not null default 'application/pdf'
+                    """
+                )
                 cur.execute(
                     f"""
                     create table if not exists document_chunk (
@@ -248,11 +275,18 @@ class PostgresStore:
                         document_id text not null,
                         chunk_index integer not null,
                         page_number integer,
+                        start_index integer,
                         source_label text not null,
                         content text not null,
                         embedding vector({dim}) not null,
                         unique (document_id, chunk_index)
                     )
+                    """
+                )
+                cur.execute(
+                    """
+                    alter table document_chunk
+                        add column if not exists start_index integer
                     """
                 )
                 cur.execute(
@@ -277,6 +311,8 @@ class PostgresStore:
         *,
         file_name: str,
         status: str,
+        source_kind: str = "pdf",
+        mime_type: str = "application/pdf",
         chunks_indexed: int | None = None,
         error: str | None = None,
         summary: str | None = None,
@@ -292,6 +328,8 @@ class PostgresStore:
             document_id,
             file_name=file_name,
             status=status,
+            source_kind=source_kind,
+            mime_type=mime_type,
             chunks_indexed=chunks_indexed,
             error=error,
             summary=summary,
@@ -306,15 +344,17 @@ class PostgresStore:
             cur.execute(
                 """
                 insert into document_index (
-                    document_id, file_name, status, chunks_indexed, error, summary,
-                    key_points, action_items, quiz, ocr_used, ocr_provider,
-                    insights_status, updated_at
+                    document_id, file_name, source_kind, mime_type, status,
+                    chunks_indexed, error, summary, key_points, action_items, quiz,
+                    ocr_used, ocr_provider, insights_status, updated_at
                 ) values (
-                    %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s,
-                    %s, now()
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
+                    %s, %s, %s, now()
                 )
                 on conflict (document_id) do update set
                     file_name = excluded.file_name,
+                    source_kind = excluded.source_kind,
+                    mime_type = excluded.mime_type,
                     status = excluded.status,
                     chunks_indexed = excluded.chunks_indexed,
                     error = excluded.error,
@@ -330,6 +370,8 @@ class PostgresStore:
                 (
                     document_id,
                     row["file_name"],
+                    row["source_kind"],
+                    row["mime_type"],
                     row["status"],
                     row["chunks_indexed"],
                     row["error"],
@@ -350,9 +392,9 @@ class PostgresStore:
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                select document_id, file_name, status, chunks_indexed, error,
-                       summary, key_points, action_items, quiz, ocr_used,
-                       ocr_provider, insights_status, updated_at
+                select document_id, file_name, source_kind, mime_type, status,
+                       chunks_indexed, error, summary, key_points, action_items,
+                       quiz, ocr_used, ocr_provider, insights_status, updated_at
                 from document_index where document_id = %s
                 """,
                 (document_id,),
@@ -393,6 +435,7 @@ class PostgresStore:
                 document_id,
                 chunk.metadata.get("chunk_index", index),
                 chunk.metadata.get("page_number"),
+                chunk.metadata.get("start_index"),
                 chunk.metadata.get("source_label", "document"),
                 chunk.page_content,
                 Vector(embedding),
@@ -408,9 +451,9 @@ class PostgresStore:
             cur.executemany(
                 """
                 insert into document_chunk (
-                    document_id, chunk_index, page_number, source_label, content,
-                    embedding
-                ) values (%s, %s, %s, %s, %s, %s)
+                    document_id, chunk_index, page_number, start_index,
+                    source_label, content, embedding
+                ) values (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 rows,
             )
@@ -426,7 +469,7 @@ class PostgresStore:
         with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                select chunk_index, page_number, source_label, content
+                select chunk_index, page_number, start_index, source_label, content
                 from document_chunk
                 where document_id = %s
                 order by embedding <=> %s
@@ -442,6 +485,7 @@ class PostgresStore:
                     "document_id": document_id,
                     "chunk_index": row["chunk_index"],
                     "page_number": row["page_number"],
+                    "start_index": row["start_index"],
                     "source_label": row["source_label"],
                 },
             )
@@ -456,6 +500,23 @@ class PostgresStore:
                 (document_id,),
             )
             return int(cur.fetchone()[0])
+
+    def list_chunks(self, document_id: str) -> list[dict[str, Any]]:
+        self.ensure_schema()
+        from psycopg.rows import dict_row
+
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                select chunk_index, page_number, start_index, source_label
+                from document_chunk
+                where document_id = %s
+                order by chunk_index
+                """,
+                (document_id,),
+            )
+            rows = cur.fetchall()
+        return [dict(row) for row in rows]
 
     def delete_document(self, document_id: str) -> None:
         self.ensure_schema()
@@ -511,6 +572,21 @@ class MemoryStore:
 
     def count_chunks(self, document_id: str) -> int:
         return len(self.chunks.get(document_id, []))
+
+    def list_chunks(self, document_id: str) -> list[dict[str, Any]]:
+        entries = sorted(
+            self.chunks.get(document_id, []),
+            key=lambda item: item[0].metadata.get("chunk_index", 0),
+        )
+        return [
+            {
+                "chunk_index": doc.metadata.get("chunk_index", index),
+                "page_number": doc.metadata.get("page_number"),
+                "start_index": doc.metadata.get("start_index"),
+                "source_label": doc.metadata.get("source_label", "document"),
+            }
+            for index, (doc, _) in enumerate(entries)
+        ]
 
     def ping(self) -> None:
         return None

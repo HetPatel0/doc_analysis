@@ -2,6 +2,7 @@
 
 import {
   FileText,
+  Link2,
   LoaderCircle,
   LogIn,
   LogOut,
@@ -13,7 +14,11 @@ import {
 } from "lucide-react";
 
 import { ScrollArea } from "@/components/scroll-area";
-import type { DocumentSummary } from "@/lib/workspace-types";
+import {
+  SOURCE_KIND_LABEL,
+  sourceKindOf,
+  type DocumentSummary,
+} from "@/lib/workspace-types";
 import { cn } from "@/lib/utils";
 
 type DocSidebarProps = {
@@ -29,6 +34,7 @@ type DocSidebarProps = {
   onSelect: (documentId: string) => void;
   onDelete: (documentId: string) => void;
   onUpload: () => void;
+  onImport: () => void;
   onToggleTheme: () => void;
   onSignIn: () => void;
   onSignUp: () => void;
@@ -62,6 +68,7 @@ export function DocSidebar({
   onSelect,
   onDelete,
   onUpload,
+  onImport,
   onToggleTheme,
   onSignIn,
   onSignUp,
@@ -83,7 +90,7 @@ export function DocSidebar({
         </div>
       </div>
 
-      <div className="px-2 pb-1">
+      <div className="flex flex-col gap-0.5 px-2 pb-1">
         <button
           type="button"
           onClick={onUpload}
@@ -96,8 +103,17 @@ export function DocSidebar({
             <Plus className="size-4 shrink-0" />
           )}
           <span className="truncate">
-            {isUploading ? "Adding PDF…" : "Add PDF"}
+            {isUploading ? "Adding document…" : "Add document"}
           </span>
+        </button>
+        <button
+          type="button"
+          onClick={onImport}
+          disabled={uploadDisabled}
+          className="flex h-9 w-full items-center gap-2 px-2.5 text-[12.5px] font-medium text-foreground/70 transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Link2 className="size-4 shrink-0" />
+          <span className="truncate">Import URL</span>
         </button>
       </div>
 
@@ -117,7 +133,7 @@ export function DocSidebar({
             <p className="text-[11.5px] leading-5 text-muted-foreground/80">
               No documents yet.
               <br />
-              Add a PDF to start reading.
+              Add a document to start reading.
             </p>
           </div>
         ) : (
@@ -162,6 +178,7 @@ export function DocSidebar({
                         {doc.fileName}
                       </p>
                       <p className="truncate font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground/70">
+                        {SOURCE_KIND_LABEL[sourceKindOf(doc)]} ·{" "}
                         {statusLabel[doc.status]}
                         {doc.status === "ready" && doc.chunksIndexed
                           ? ` · ${doc.chunksIndexed} chunks`

@@ -9,6 +9,7 @@ import { documents, messages, usageSubjects } from "@/lib/db/schema";
 import {
   GUEST_CHAT_LIMIT,
   GUEST_UPLOAD_LIMIT,
+  normalizeSourceKind,
   type ChatDocumentResponse,
   type DocumentSummary,
   type UploadDocumentResponse,
@@ -53,6 +54,8 @@ type BackendStatusResponse = {
   document_id: string;
   file_name: string;
   status: "queued" | "indexing" | "ready" | "failed";
+  source_kind?: string;
+  mime_type?: string;
   chunks_indexed?: number | null;
   error?: string | null;
   summary?: string | null;
@@ -68,7 +71,30 @@ type BackendUploadResponse = {
   document_id: string;
   file_name: string;
   status: "queued";
+  source_kind?: string;
+  mime_type?: string;
+  source_url?: string;
   detail?: string;
+};
+
+type BackendChunk = {
+  chunk_index: number;
+  page_number: number | null;
+  start_index: number | null;
+  source_label: string;
+};
+
+type BackendChunksResponse = {
+  chunks?: BackendChunk[];
+  detail?: string;
+};
+
+export type DocumentChunk = {
+  /** 1-based chunk number, matching citation labels. */
+  chunk: number;
+  page: number | null;
+  startIndex: number | null;
+  label: string;
 };
 
 type BackendChatResponse = {
@@ -395,6 +421,19 @@ export function toDocumentSummary(document: DocumentRow | null): DocumentSummary
   };
 }
 
+/** Prefer the backend's stored kind/MIME over the file-name guess. */
+function withBackendSource(
+  summary: DocumentSummary,
+  sourceKind?: string | null,
+  mimeType?: string | null
+): DocumentSummary {
+  return {
+    ...summary,
+    sourceKind: normalizeSourceKind(sourceKind) ?? summary.sourceKind,
+    mimeType: mimeType ?? summary.mimeType,
+  };
+}
+
 export function buildWorkspaceState(actor: ActorContext): WorkspaceState {
   const chatCount = actor.usage?.chatCount ?? 0;
   const uploadCount = actor.usage?.uploadCount ?? 0;
@@ -469,35 +508,26 @@ export async function selectActiveDocumentForActor(
   });
 }
 
-export async function uploadDocumentForActor(
+/**
+ * Persist the backend's document row and count it against the owner's quota.
+ * Uploads and URL imports share this so guest limits stay identical.
+ */
+async function registerDocumentForActor(
   actor: ActorContext,
-  file: File
-): Promise<UploadDocumentResponse> {
-  if (actor.type === "guest" && (actor.usage?.uploadCount ?? 0) >= GUEST_UPLOAD_LIMIT) {
-    throw new Error("Guest mode supports one PDF. Log in to upload more.");
+  backendDocument: {
+    document_id: string;
+    file_name: string;
+    source_kind?: string | null;
+    mime_type?: string | null;
   }
-
-  const formData = new FormData();
-  formData.append("file", file);
-
-  const { response: backendResponse, result } =
-    await requestBackend<BackendUploadResponse>("/upload", {
-      method: "POST",
-      body: formData,
-      errorMessage: "Could not reach the PDF backend.",
-    });
-
-  if (!backendResponse.ok || !result.document_id) {
-    throw new Error(result.detail ?? "Upload failed.");
-  }
-
+): Promise<DocumentSummary> {
   const [document] = await db
     .insert(documents)
     .values({
-      documentId: result.document_id,
+      documentId: backendDocument.document_id,
       ownerType: actor.type,
       ownerId: actor.ownerId,
-      fileName: result.file_name,
+      fileName: backendDocument.file_name,
       status: "queued",
     })
     .returning();
@@ -516,8 +546,74 @@ export async function uploadDocumentForActor(
       )
     );
 
+  return withBackendSource(
+    toDocumentSummary(document)!,
+    backendDocument.source_kind,
+    backendDocument.mime_type
+  );
+}
+
+function assertGuestUploadAvailable(actor: ActorContext) {
+  if (actor.type === "guest" && (actor.usage?.uploadCount ?? 0) >= GUEST_UPLOAD_LIMIT) {
+    throw new Error("Guest mode supports one document. Log in to upload more.");
+  }
+}
+
+export async function uploadDocumentForActor(
+  actor: ActorContext,
+  file: File
+): Promise<UploadDocumentResponse> {
+  assertGuestUploadAvailable(actor);
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const { response: backendResponse, result } =
+    await requestBackend<BackendUploadResponse>("/upload", {
+      method: "POST",
+      body: formData,
+      errorMessage: "Could not reach the document service.",
+    });
+
+  if (!backendResponse.ok || !result.document_id) {
+    throw new Error(result.detail ?? "Upload failed.");
+  }
+
   return {
-    document: toDocumentSummary(document)!,
+    document: await registerDocumentForActor(actor, result),
+  };
+}
+
+export async function importDocumentForActor(
+  actor: ActorContext,
+  url: string
+): Promise<UploadDocumentResponse> {
+  assertGuestUploadAvailable(actor);
+
+  const trimmed = url.trim();
+  if (!trimmed) {
+    throw new Error("Enter a URL to import.");
+  }
+
+  const { response: backendResponse, result } = await requestBackend<
+    BackendUploadResponse & { status?: string }
+  >("/import/url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: trimmed }),
+    errorMessage: "Could not reach the document service.",
+  });
+
+  if (!backendResponse.ok || !result.document_id) {
+    throw new Error(result.detail ?? "Could not import that URL.");
+  }
+
+  return {
+    document: await registerDocumentForActor(actor, {
+      ...result,
+      source_kind: result.source_kind ?? "url",
+      mime_type: result.mime_type ?? "text/plain; charset=utf-8",
+    }),
   };
 }
 
@@ -531,7 +627,7 @@ export async function deleteDocumentForActor(
     detail?: string;
   }>(`/documents/${documentId}`, {
     method: "DELETE",
-    errorMessage: "Could not reach the PDF backend.",
+    errorMessage: "Could not reach the document service.",
   });
 
   if (!backendResponse.ok) {
@@ -657,7 +753,7 @@ export async function streamChatForActor(
     });
   } catch {
     throw new Error(
-      `Could not reach the PDF backend. The backend service is unreachable at ${BACKEND_API_URL}.`
+      `Could not reach the document service. The backend service is unreachable at ${BACKEND_API_URL}.`
     );
   }
 
@@ -767,7 +863,7 @@ export async function syncDocumentStatus(
   const { response: backendResponse, result } =
     await requestBackend<BackendStatusResponse>(`/documents/${documentId}`, {
       cache: "no-store",
-      errorMessage: "Could not reach the PDF backend.",
+      errorMessage: "Could not reach the document service.",
     });
 
   if (!backendResponse.ok || !result.status) {
@@ -786,7 +882,11 @@ export async function syncDocumentStatus(
     .returning();
 
   return {
-    ...toDocumentSummary(updated)!,
+    ...withBackendSource(
+      toDocumentSummary(updated)!,
+      result.source_kind,
+      result.mime_type
+    ),
     summary: result.summary ?? null,
     keyPoints: result.key_points ?? [],
     actionItems: result.action_items ?? [],
@@ -795,6 +895,33 @@ export async function syncDocumentStatus(
     insightsStatus: result.insights_status,
     stalled: Boolean(result.stalled),
   };
+}
+
+export async function getDocumentChunksForActor(
+  actor: ActorContext,
+  documentId: string
+): Promise<DocumentChunk[]> {
+  await assertDocumentOwnership(actor, documentId);
+
+  const { response, result } = await requestBackend<BackendChunksResponse>(
+    `/documents/${documentId}/chunks`,
+    {
+      cache: "no-store",
+      errorMessage: "Could not reach the document service.",
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(result.detail ?? "Could not load the document text.");
+  }
+
+  return (result.chunks ?? []).map((chunk) => ({
+    // The backend stores 0-based indexes; citations are 1-based.
+    chunk: chunk.chunk_index + 1,
+    page: chunk.page_number,
+    startIndex: chunk.start_index,
+    label: chunk.source_label,
+  }));
 }
 
 export async function retryDocumentForActor(
@@ -809,7 +936,7 @@ export async function retryDocumentForActor(
   }>(`/documents/${documentId}/retry`, {
     method: "POST",
     cache: "no-store",
-    errorMessage: "Could not reach the PDF backend.",
+    errorMessage: "Could not reach the document service.",
   });
 
   if (!response.ok) {
@@ -854,7 +981,7 @@ export async function getDocumentFileForActor(
     );
   } catch {
     throw new Error(
-      `Could not reach the PDF backend. The backend service is unreachable at ${BACKEND_API_URL}.`
+      `Could not reach the document service. The backend service is unreachable at ${BACKEND_API_URL}.`
     );
   }
 
@@ -912,7 +1039,7 @@ export async function chatWithDocumentForActor(
         message: trimmedMessage,
         history,
       }),
-      errorMessage: "Could not reach the PDF backend.",
+      errorMessage: "Could not reach the document service.",
     });
 
   if (!backendResponse.ok || !result.answer) {

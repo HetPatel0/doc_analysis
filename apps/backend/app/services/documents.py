@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import threading
 import time
@@ -14,7 +13,7 @@ from app import dependencies as deps
 from app.config import settings
 from app.observability import capture_exception
 from app.schemas import DocumentStatusResponse
-from app.services import chunking, insights, ocr, retrieval
+from app.services import chunking, insights, loaders, ocr, retrieval
 from app.services.store import get_store
 
 logger = logging.getLogger(__name__)
@@ -31,12 +30,9 @@ def get_legacy_vectorstore_path(document_id: str) -> Path:
     return settings.vectorstores_dir / document_id
 
 
-def sanitize_file_name(raw_name: str | None) -> str:
-    name = Path(raw_name or "document.pdf").name.strip() or "document.pdf"
-    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._") or "document.pdf"
-    if not name.lower().endswith(".pdf"):
-        name = f"{name}.pdf"
-    return name[:128]
+def sanitize_file_name(raw_name: str | None, kind: str = loaders.PDF) -> str:
+    """Keep the historical entry point; formatting lives in ``loaders``."""
+    return loaders.sanitize_file_name(raw_name, kind)
 
 
 def write_document_status(
@@ -44,6 +40,8 @@ def write_document_status(
     *,
     file_name: str,
     status: str,
+    source_kind: str = loaders.PDF,
+    mime_type: str | None = None,
     chunks_indexed: int | None = None,
     error: str | None = None,
     summary: str | None = None,
@@ -58,6 +56,8 @@ def write_document_status(
         document_id,
         file_name=file_name,
         status=status,
+        source_kind=source_kind,
+        mime_type=mime_type or loaders.mime_type_for(source_kind),
         chunks_indexed=chunks_indexed,
         error=error,
         summary=summary,
@@ -120,15 +120,14 @@ def delete_document_files(document_id: str) -> None:
             upload_path.unlink()
 
 
+def list_document_chunks(document_id: str) -> list[dict]:
+    """Chunk positions for the text reader's citation anchors."""
+    return get_store().list_chunks(document_id)
+
+
 def _load_text_pages(upload_path: Path) -> tuple[list, int]:
-    """Return pages that have a text layer plus the total page count."""
-    PyPDFLoader, _ = deps.get_indexing_dependencies()
-    try:
-        pages = PyPDFLoader(str(upload_path)).load()
-    except Exception:
-        # A corrupt/odd PDF can still be readable by OCR.
-        return [], 0
-    return [doc for doc in pages if doc.page_content.strip()], len(pages)
+    """Return the PDF text layer; kept for callers/tests that import it."""
+    return loaders.load_document(upload_path, loaders.PDF)
 
 
 def _embed_chunks(texts: list[str]) -> list[list[float]]:
@@ -180,24 +179,45 @@ def _document_was_deleted(document_id: str) -> bool:
         return False
 
 
-def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
+def index_document(
+    document_id: str,
+    file_name: str,
+    upload_path: Path,
+    source_kind: str = loaders.PDF,
+    mime_type: str | None = None,
+) -> None:
+    """Index one uploaded document, whatever its format."""
     if _recently_deleted(document_id):
         return
+
+    kind = loaders.normalize_source_kind(source_kind)
+    mime = mime_type or loaders.mime_type_for(kind)
     started = time.perf_counter()
-    write_document_status(document_id, file_name=file_name, status="indexing")
+    write_document_status(
+        document_id,
+        file_name=file_name,
+        status="indexing",
+        source_kind=kind,
+        mime_type=mime,
+    )
 
     load_seconds = ocr_seconds = chunk_seconds = 0.0
     embed_seconds = store_seconds = 0.0
     chunks: list = []
     ocr_used = False
     ocr_provider: str | None = None
+    is_pdf = loaders.loader_kind(kind) == loaders.PDF
 
     try:
         step = time.perf_counter()
-        docs, page_count = _load_text_pages(upload_path)
+        docs, page_count = loaders.load_document(upload_path, kind)
         load_seconds = time.perf_counter() - step
 
-        if settings.ocr_provider != "off" and ocr.needs_ocr(docs, page_count):
+        if (
+            is_pdf
+            and settings.ocr_provider != "off"
+            and ocr.needs_ocr(docs, page_count)
+        ):
             step = time.perf_counter()
             result = ocr.ocr_pdf(upload_path, file_name)
             ocr_seconds = time.perf_counter() - step
@@ -207,14 +227,22 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
                 ocr_provider = result.provider
 
         if not docs:
-            raise ValueError("The PDF did not contain readable pages.")
+            if is_pdf:
+                raise ValueError("The PDF did not contain readable pages.")
+            raise ValueError("The document did not contain readable text.")
 
         step = time.perf_counter()
         chunks = chunking.split_documents(docs)
         chunk_seconds = time.perf_counter() - step
 
         if not chunks:
-            raise ValueError("The PDF did not contain enough readable text to index.")
+            if is_pdf:
+                raise ValueError(
+                    "The PDF did not contain enough readable text to index."
+                )
+            raise ValueError(
+                "The document did not contain enough readable text to index."
+            )
 
         for chunk_index, chunk in enumerate(chunks):
             page_number = retrieval.normalize_page_number(chunk.metadata)
@@ -239,8 +267,8 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
         store_seconds = time.perf_counter() - step
 
         # Chunks are searchable as soon as they are stored. Insights are a
-        # second LLM call and must not hold chat (or the PDF preview) hostage,
-        # so mark the document ready now and patch the insights in afterwards.
+        # second LLM call and must not hold chat (or the preview) hostage, so
+        # mark the document ready now and patch the insights in afterwards.
         if _document_was_deleted(document_id):
             get_store().delete_document(document_id)
             return
@@ -248,6 +276,8 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
             document_id,
             file_name=file_name,
             status="ready",
+            source_kind=kind,
+            mime_type=mime,
             chunks_indexed=len(chunks),
             ocr_used=ocr_used,
             ocr_provider=ocr_provider,
@@ -261,6 +291,8 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
             document_id,
             file_name=file_name,
             status="failed",
+            source_kind=kind,
+            mime_type=mime,
             error=str(exc),
             insights_status="unavailable",
         )
@@ -301,6 +333,8 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
             document_id,
             file_name=file_name,
             status="ready",
+            source_kind=kind,
+            mime_type=mime,
             chunks_indexed=len(chunks),
             ocr_used=ocr_used,
             ocr_provider=ocr_provider,
@@ -323,4 +357,15 @@ def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
         insights_seconds,
         len(chunks),
         ocr_provider or "no",
+    )
+
+
+def index_pdf(document_id: str, file_name: str, upload_path: Path) -> None:
+    """Backwards-compatible PDF entry point used by scripts and old callers."""
+    index_document(
+        document_id,
+        file_name,
+        upload_path,
+        loaders.PDF,
+        loaders.mime_type_for(loaders.PDF),
     )

@@ -5,7 +5,12 @@ import dynamic from "next/dynamic";
 import { FileText, LoaderCircle, Trash2 } from "lucide-react";
 
 import { DocumentInsights } from "@/components/document-insights";
-import type { DocumentSummary } from "@/lib/workspace-types";
+import {
+  SOURCE_KIND_LABEL,
+  isPdfDocument,
+  sourceKindOf,
+  type DocumentSummary,
+} from "@/lib/workspace-types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -29,11 +34,25 @@ const PdfViewer = dynamic(
   }
 );
 
+const TextViewer = dynamic(
+  () => import("@/components/text-viewer").then((module) => module.TextViewer),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <LoaderCircle className="size-4 animate-spin text-muted-foreground/60" />
+      </div>
+    ),
+  }
+);
+
 type DocumentPanelProps = {
   document: DocumentSummary | null;
   isLoading?: boolean;
   page: number;
   onPageChange: (page: number) => void;
+  /** 1-based text chunk, used by the plain-text viewer for citations. */
+  chunk: number | null;
   isDeleting?: boolean;
   onDelete?: () => void;
   isRetrying?: boolean;
@@ -45,12 +64,13 @@ export function DocumentPanel({
   isLoading = false,
   page,
   onPageChange,
+  chunk,
   isDeleting = false,
   onDelete,
   isRetrying = false,
   onRetry,
 }: DocumentPanelProps) {
-  const [tab, setTab] = useState<"pdf" | "insights">("pdf");
+  const [tab, setTab] = useState<"document" | "insights">("document");
 
   if (!document) {
     // While the workspace snapshot is still in flight, show a paper-shaped
@@ -68,12 +88,17 @@ export function DocumentPanel({
             No document selected
           </p>
           <p className="max-w-xs text-[11.5px] leading-5 text-muted-foreground">
-            Add a PDF to read it here, side by side with the chat.
+            Add a PDF, DOCX, TXT, or Markdown file to read it here, side by side
+            with the chat.
           </p>
         </div>
       </div>
     );
   }
+
+  const kind = sourceKindOf(document);
+  const viewerLabel = SOURCE_KIND_LABEL[kind];
+  const isPdf = isPdfDocument(document);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -81,11 +106,11 @@ export function DocumentPanel({
         <div className="flex shrink-0 items-center gap-4">
           <button
             type="button"
-            onClick={() => setTab("pdf")}
-            aria-pressed={tab === "pdf"}
+            onClick={() => setTab("document")}
+            aria-pressed={tab === "document"}
             className={cn(
               "flex items-center gap-1.5 text-[12px] font-medium transition-colors",
-              tab === "pdf"
+              tab === "document"
                 ? "text-foreground"
                 : "text-muted-foreground hover:text-foreground"
             )}
@@ -94,10 +119,10 @@ export function DocumentPanel({
               aria-hidden
               className={cn(
                 "size-1 rounded-full transition-colors",
-                tab === "pdf" ? "bg-primary" : "bg-transparent"
+                tab === "document" ? "bg-primary" : "bg-transparent"
               )}
             />
-            PDF
+            {viewerLabel}
           </button>
 
           <button
@@ -151,13 +176,13 @@ export function DocumentPanel({
         <div
           className={cn(
             "min-h-0 min-w-0 flex-1",
-            tab === "pdf" ? "flex" : "hidden"
+            tab === "document" ? "flex" : "hidden"
           )}
         >
           {/*
            * The uploaded file exists as soon as the backend accepts it, so the
-           * PDF can open while indexing continues. Only a failed or stalled
-           * document has no usable indexing state.
+           * document can open while indexing continues. Only a failed or
+           * stalled document has no usable indexing state.
            */}
           {document.status === "failed" || document.stalled ? (
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
@@ -183,12 +208,18 @@ export function DocumentPanel({
                 </button>
               ) : null}
             </div>
-          ) : (
+          ) : isPdf ? (
             <PdfViewer
               key={document.documentId}
               fileUrl={`/api/documents/${document.documentId}/file`}
               page={page}
               onPageChange={onPageChange}
+            />
+          ) : (
+            <TextViewer
+              key={document.documentId}
+              documentId={document.documentId}
+              chunk={chunk}
             />
           )}
         </div>

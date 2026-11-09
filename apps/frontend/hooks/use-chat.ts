@@ -19,7 +19,7 @@ const initialMessages: Message[] = [
     id: "welcome",
     role: "assistant",
     content:
-      "Upload one PDF to begin. Guest mode allows one document and three chat messages before login is required.",
+      "Add a document to begin. Guest mode allows one document and three chat messages before login is required.",
   },
 ];
 

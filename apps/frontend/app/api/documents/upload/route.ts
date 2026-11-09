@@ -6,6 +6,7 @@ import {
   resolveActor,
   uploadDocumentForActor,
 } from "@/lib/server/workspace";
+import { validateUploadFile } from "@/lib/upload";
 
 export const runtime = "nodejs";
 
@@ -28,14 +29,15 @@ export async function POST(request: Request) {
     const file = formData.get("file");
 
     if (!(file instanceof File)) {
-      return NextResponse.json({ detail: "PDF file is required." }, { status: 400 });
-    }
-
-    if (file.type !== "application/pdf") {
       return NextResponse.json(
-        { detail: "Only PDF files are allowed." },
+        { detail: "A document file is required." },
         { status: 400 }
       );
+    }
+
+    const validationError = validateUploadFile(file);
+    if (validationError) {
+      return NextResponse.json({ detail: validationError }, { status: 400 });
     }
 
     const response = NextResponse.json(await uploadDocumentForActor(actor, file));

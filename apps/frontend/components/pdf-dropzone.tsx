@@ -3,7 +3,7 @@
 import { useRef, useState, type DragEvent, type ReactNode } from "react";
 import { LoaderCircle, UploadCloud } from "lucide-react";
 
-import { validatePdfFile } from "@/lib/upload";
+import { validateUploadFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 
 type PdfDropzoneProps = {
@@ -66,7 +66,7 @@ export function PdfDropzone({
       return;
     }
 
-    const validationError = validatePdfFile(file);
+    const validationError = validateUploadFile(file);
     if (validationError) {
       onInvalid?.(validationError);
       return;
@@ -92,7 +92,7 @@ export function PdfDropzone({
           <div className="flex flex-col items-center gap-2 text-center">
             <UploadCloud className="size-6 text-primary" />
             <p className="text-[12.5px] font-medium text-foreground">
-              Drop your PDF here
+              Drop your document here
             </p>
           </div>
         </div>
@@ -104,7 +104,7 @@ export function PdfDropzone({
             <div className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <LoaderCircle className="size-3 animate-spin" />
-                Uploading PDF
+                Uploading document
               </span>
               <span className="tabular-nums">{progress}%</span>
             </div>

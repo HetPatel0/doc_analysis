@@ -108,7 +108,7 @@ export function AuthForm({
           <p className="text-[11.5px] leading-5 text-muted-foreground">
             {mode === "sign-in"
               ? "Log in to keep your library and continue chatting."
-              : "Guest mode is limited to one PDF and three chats."}
+              : "Guest mode is limited to one document and three chats."}
           </p>
         </div>
 

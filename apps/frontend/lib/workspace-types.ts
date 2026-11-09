@@ -18,6 +18,59 @@ export type QuizQuestion = {
   answer: string;
 };
 
+export type SourceKind = "pdf" | "docx" | "txt" | "md" | "url";
+
+export const SOURCE_KIND_LABEL: Record<SourceKind, string> = {
+  pdf: "PDF",
+  docx: "DOCX",
+  txt: "TXT",
+  md: "Markdown",
+  url: "URL",
+};
+
+export function normalizeSourceKind(
+  value: string | null | undefined
+): SourceKind | null {
+  if (!value) {
+    return null;
+  }
+
+  const candidate = value.trim().toLowerCase();
+  return candidate in SOURCE_KIND_LABEL ? (candidate as SourceKind) : null;
+}
+
+/** Fallback when a snapshot has no backend kind (the frontend DB has no column). */
+export function sourceKindFromFileName(fileName: string): SourceKind {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".pdf")) {
+    return "pdf";
+  }
+  if (lower.endsWith(".docx")) {
+    return "docx";
+  }
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+    return "md";
+  }
+  if (lower.endsWith(".txt")) {
+    return "txt";
+  }
+  return "pdf";
+}
+
+export function sourceKindOf(document: {
+  fileName: string;
+  sourceKind?: SourceKind;
+}): SourceKind {
+  return document.sourceKind ?? sourceKindFromFileName(document.fileName);
+}
+
+export function isPdfDocument(document: {
+  fileName: string;
+  sourceKind?: SourceKind;
+}): boolean {
+  return sourceKindOf(document) === "pdf";
+}
+
 export type DocumentSummary = {
   documentId: string;
   fileName: string;
@@ -25,6 +78,9 @@ export type DocumentSummary = {
   chunksIndexed: number | null;
   chatsUsed: number;
   createdAt: string;
+  /** Set from backend responses; derived from the file name as a fallback. */
+  sourceKind?: SourceKind;
+  mimeType?: string;
   summary?: string | null;
   keyPoints?: string[];
   actionItems?: string[];

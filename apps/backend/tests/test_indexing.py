@@ -344,6 +344,35 @@ def test_chunks_are_embedded_in_batches(monkeypatch, tmp_path):
     assert get_store().count_chunks("doc9") == embedded
 
 
+def test_text_documents_do_not_run_ocr(monkeypatch, tmp_path):
+    """A short text file must never fall into the scanned-PDF OCR path."""
+    install_fake_indexing(monkeypatch, [])
+    monkeypatch.setattr(
+        documents.loaders,
+        "load_document",
+        lambda path, kind: ([Document(page_content="A" * 400, metadata={})], 1),
+    )
+    ocr_calls: list = []
+    monkeypatch.setattr(documents.ocr, "ocr_pdf", lambda *a: ocr_calls.append(a))
+
+    upload = tmp_path / "notes.txt"
+    upload.write_text("A" * 400, encoding="utf-8")
+    documents.index_document(
+        "doc-txt", "notes.txt", upload, "txt", "text/plain; charset=utf-8"
+    )
+
+    result = status("doc-txt")
+    assert result["status"] == "ready"
+    assert result["source_kind"] == "txt"
+    assert result["mime_type"].startswith("text/plain")
+    assert result["ocr_used"] is False
+    assert ocr_calls == []
+
+    indexed = chunks("doc-txt")
+    assert indexed[0].metadata["page_number"] is None
+    assert indexed[0].metadata["source_label"] == "chunk 1"
+
+
 def test_semantic_chunking_indexes_with_metadata(monkeypatch, tmp_path):
     from app.config import settings
 

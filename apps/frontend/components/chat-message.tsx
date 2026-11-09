@@ -22,7 +22,7 @@ export type Message = {
 type ChatMessageProps = {
   message: Message;
   onRetry?: (prompt: string) => void;
-  onCitationClick?: (page: number) => void;
+  onCitationClick?: (citation: Citation) => void;
 };
 
 type MarkdownNode = {
@@ -33,7 +33,7 @@ type MarkdownNode = {
 };
 
 const CITATION_TOKEN =
-  /\[(?:source:\s*)?p\.\s*(\d+)(?:,\s*chunk\s*\d+)?\]/gi;
+  /\[(?:source:\s*)?(?:p\.\s*(\d+)(?:,\s*chunk\s*(\d+))?|chunk\s*(\d+))\]/gi;
 
 function citationNodes(value: string): MarkdownNode[] {
   const nodes: MarkdownNode[] = [];
@@ -46,11 +46,18 @@ function citationNodes(value: string): MarkdownNode[] {
       nodes.push({ type: "text", value: value.slice(lastIndex, match.index) });
     }
 
-    const page = Number.parseInt(match[1], 10);
+    const page = match[1] ? Number.parseInt(match[1], 10) : null;
+    const chunk = match[2]
+      ? Number.parseInt(match[2], 10)
+      : match[3]
+        ? Number.parseInt(match[3], 10)
+        : null;
+    const label = page ? `p. ${page}` : `chunk ${chunk}`;
+
     nodes.push({
       type: "link",
-      url: `#pdf-page-${page}`,
-      children: [{ type: "text", value: `p. ${page}` }],
+      url: page ? `#doc-page-${page}` : `#doc-chunk-${chunk}`,
+      children: [{ type: "text", value: label }],
     });
     lastIndex = match.index + match[0].length;
   }
@@ -99,6 +106,10 @@ function pageLabel(citation: Citation) {
   return citation.page ? `p. ${citation.page}` : citation.label;
 }
 
+function citationKey(citation: Citation, index: number) {
+  return `${citation.label}-${citation.page ?? "none"}-${citation.chunk ?? "none"}-${index}`;
+}
+
 export function ChatMessage({
   message,
   onRetry,
@@ -135,18 +146,26 @@ export function ChatMessage({
     Boolean(onRetry);
 
   function CitationAnchor({ href, children }: ComponentProps<"a">) {
-    const pageMatch = href?.match(/^#pdf-page-(\d+)$/);
+    const pageMatch = href?.match(/^#doc-page-(\d+)$/);
+    const chunkMatch = href?.match(/^#doc-chunk-(\d+)$/);
     const page = pageMatch ? Number.parseInt(pageMatch[1], 10) : null;
+    const chunk = chunkMatch ? Number.parseInt(chunkMatch[1], 10) : null;
 
-    if (page && onCitationClick) {
+    if ((page || chunk) && onCitationClick) {
+      const citation: Citation = {
+        label: page ? `p. ${page}` : `chunk ${chunk}`,
+        page,
+        chunk,
+      };
+
       return (
         <button
           type="button"
-          onClick={() => onCitationClick(page)}
-          title={`Jump to page ${page}`}
+          onClick={() => onCitationClick(citation)}
+          title={page ? `Jump to page ${page}` : `Jump to chunk ${chunk}`}
           className="mx-0.5 inline text-[11px] font-medium text-primary underline decoration-primary/30 underline-offset-[3px] transition-colors hover:decoration-primary"
         >
-          {`p. ${page}`}
+          {page ? `p. ${page}` : `chunk ${chunk}`}
         </button>
       );
     }
@@ -235,22 +254,26 @@ export function ChatMessage({
       {citations.length > 0 ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
           <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground/50">
-            Pages
+            Sources
           </span>
           {citations.map((citation, index) =>
-            citation.page && onCitationClick ? (
+            (citation.page || citation.chunk) && onCitationClick ? (
               <button
-                key={`${citation.label}-${citation.page}-${index}`}
+                key={citationKey(citation, index)}
                 type="button"
-                onClick={() => onCitationClick(citation.page!)}
-                title={`Jump to page ${citation.page}`}
+                onClick={() => onCitationClick(citation)}
+                title={
+                  citation.page
+                    ? `Jump to page ${citation.page}`
+                    : `Jump to chunk ${citation.chunk}`
+                }
                 className="text-[11px] text-muted-foreground underline-offset-[3px] transition-colors hover:text-primary hover:underline"
               >
                 {pageLabel(citation)}
               </button>
             ) : (
               <span
-                key={`${citation.label}-${citation.page ?? "none"}-${index}`}
+                key={citationKey(citation, index)}
                 className="text-[11px] text-muted-foreground/80"
               >
                 {pageLabel(citation)}

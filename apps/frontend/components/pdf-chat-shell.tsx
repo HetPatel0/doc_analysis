@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import {
   ArrowUp,
   FileText,
+  Link2,
   LoaderCircle,
   LogIn,
   Moon,
@@ -15,11 +16,17 @@ import {
 
 import { authClient } from "@/lib/auth-client";
 import { toErrorMessage } from "@/lib/errors";
-import { uploadPdfWithProgress, validatePdfFile } from "@/lib/upload";
+import {
+  SUPPORTED_UPLOAD_ACCEPT,
+  importDocumentFromUrl,
+  uploadDocumentWithProgress,
+  validateUploadFile,
+} from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import {
   GUEST_CHAT_LIMIT,
   hasDocumentInsights,
+  type Citation,
   type DocumentSummary,
 } from "@/lib/workspace-types";
 
@@ -29,6 +36,7 @@ import { DocSidebar } from "@/components/doc-sidebar";
 import { DocumentPanel } from "@/components/document-panel";
 import { PdfDropzone } from "@/components/pdf-dropzone";
 import { ScrollArea } from "@/components/scroll-area";
+import { UrlImportDialog } from "@/components/url-import-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useChat } from "@/hooks/use-chat";
 import { useTheme } from "@/hooks/use-theme";
@@ -37,7 +45,7 @@ import { useWorkspace } from "@/hooks/use-workspace";
 type ErrorResponse = { detail?: string };
 
 const starterPrompts = [
-  "Summarize this PDF",
+  "Summarize this document",
   "List the key action items",
   "Explain the main argument",
 ];
@@ -61,6 +69,7 @@ export default function PdfChatShell() {
 
   const [authMode, setAuthMode] = useState<AuthMode>("sign-in");
   const [showAuthForm, setShowAuthForm] = useState(false);
+  const [showUrlImport, setShowUrlImport] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(
@@ -72,7 +81,8 @@ export default function PdfChatShell() {
   const [viewer, setViewer] = useState<{
     documentId: string | null;
     page: number;
-  }>({ documentId: null, page: 1 });
+    chunk: number | null;
+  }>({ documentId: null, page: 1, chunk: null });
   const [mobileTab, setMobileTab] = useState<"chat" | "document">("chat");
 
   // Warm the PDF chunk during idle startup so opening the first document never
@@ -142,6 +152,8 @@ export default function PdfChatShell() {
 
   const activeDocumentId = document?.documentId ?? null;
   const viewerPage = viewer.documentId === activeDocumentId ? viewer.page : 1;
+  const viewerChunk =
+    viewer.documentId === activeDocumentId ? viewer.chunk : null;
   const setDocument = workspace.setDocument;
 
   useEffect(() => {
@@ -245,11 +257,15 @@ export default function PdfChatShell() {
   }, [activeDocumentId, document?.status, document?.stalled, setDocument]);
 
   function setViewerPage(page: number) {
-    setViewer({ documentId: activeDocumentId, page });
+    setViewer({ documentId: activeDocumentId, page, chunk: null });
   }
 
-  function handleCitationClick(page: number) {
-    setViewerPage(page);
+  function handleCitationClick(citation: Citation) {
+    setViewer({
+      documentId: activeDocumentId,
+      page: citation.page ?? 1,
+      chunk: citation.chunk ?? null,
+    });
     setMobileTab("document");
   }
 
@@ -301,7 +317,7 @@ export default function PdfChatShell() {
       }
 
       if (result.status === "failed") {
-        throw new Error("Document indexing failed. Please try another PDF.");
+        throw new Error("Document indexing failed. Please try another document.");
       }
     }
 
@@ -309,7 +325,7 @@ export default function PdfChatShell() {
   }
 
   async function handleUpload(file: File) {
-    const validationError = validatePdfFile(file);
+    const validationError = validateUploadFile(file);
     if (validationError) {
       chat.appendAssistant(validationError);
       return;
@@ -320,10 +336,10 @@ export default function PdfChatShell() {
     shouldAutoScrollRef.current = true;
 
     try {
-      const result = await uploadPdfWithProgress(file, setUploadProgress);
+      const result = await uploadDocumentWithProgress(file, setUploadProgress);
 
       if (!result.document) {
-        throw new Error("Could not upload the PDF.");
+        throw new Error("Could not upload the document.");
       }
 
       workspace.setDocument(result.document);
@@ -331,7 +347,7 @@ export default function PdfChatShell() {
       await pollDocumentStatus(result.document.documentId);
       scrollMessagesToBottom();
     } catch (error) {
-      const message = toErrorMessage(error, "Could not upload the PDF.");
+      const message = toErrorMessage(error, "Could not upload the document.");
       chat.appendAssistant(message);
 
       if (/guest mode/i.test(message)) {
@@ -340,6 +356,41 @@ export default function PdfChatShell() {
     } finally {
       setIsPreparing(false);
       setUploadProgress(0);
+    }
+  }
+
+  /** Returns an error message for the dialog, or null once indexing is queued. */
+  async function handleImportUrl(url: string): Promise<string | null> {
+    if (isPreparing) {
+      return "Another document is still being added.";
+    }
+
+    setIsPreparing(true);
+    shouldAutoScrollRef.current = true;
+
+    try {
+      const result = await importDocumentFromUrl(url);
+
+      if (!result.document) {
+        return "Could not import that page.";
+      }
+
+      workspace.setDocument(result.document);
+      await workspace.refresh().catch(() => undefined);
+      await pollDocumentStatus(result.document.documentId);
+      scrollMessagesToBottom();
+      return null;
+    } catch (error) {
+      const message = toErrorMessage(error, "Could not import that page.");
+      chat.appendAssistant(message);
+
+      if (/guest mode/i.test(message)) {
+        setShowAuthForm(true);
+      }
+
+      return message;
+    } finally {
+      setIsPreparing(false);
     }
   }
 
@@ -454,14 +505,14 @@ export default function PdfChatShell() {
           : "Enter to send · Shift + Enter for a new line"
         : document
           ? "Document is indexing…"
-          : "Add a PDF to enable chat";
+          : "Add a document to enable chat";
 
   return (
     <main className="app-canvas relative flex h-[100dvh] w-full overflow-hidden">
       <input
         ref={fileInputRef}
         type="file"
-        accept="application/pdf"
+        accept={SUPPORTED_UPLOAD_ACCEPT}
         className="hidden"
         onChange={handleFileChange}
       />
@@ -479,6 +530,7 @@ export default function PdfChatShell() {
         onSelect={(documentId) => void handleSelectDocument(documentId)}
         onDelete={(documentId) => void handleDelete(documentId)}
         onUpload={() => fileInputRef.current?.click()}
+        onImport={() => setShowUrlImport(true)}
         onToggleTheme={toggleTheme}
         onSignIn={() => openAuth("sign-in")}
         onSignUp={() => openAuth("sign-up")}
@@ -529,9 +581,18 @@ export default function PdfChatShell() {
             </button>
             <button
               type="button"
+              onClick={() => setShowUrlImport(true)}
+              disabled={uploadDisabled}
+              aria-label="Import URL"
+              className="flex size-8 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:opacity-40"
+            >
+              <Link2 className="size-4" />
+            </button>
+            <button
+              type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={uploadDisabled}
-              aria-label="Add PDF"
+              aria-label="Add document"
               className="flex size-8 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:opacity-40"
             >
               {isPreparing ? (
@@ -593,6 +654,7 @@ export default function PdfChatShell() {
               isLoading={workspace.isWorkspaceLoading}
               page={viewerPage}
               onPageChange={setViewerPage}
+              chunk={viewerChunk}
               isDeleting={Boolean(
                 document && deletingDocumentId === document.documentId
               )}
@@ -674,23 +736,34 @@ export default function PdfChatShell() {
                           Start with a document
                         </p>
                         <p className="text-[12px] leading-5 text-muted-foreground">
-                          Drop a PDF anywhere in this panel, or choose a file.
+                          Drop a document anywhere in this panel, or choose a file.
                           Guest mode includes one document and three questions.
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploadDisabled}
-                        className="inline-flex h-8 w-fit items-center gap-2 bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        {isPreparing ? (
-                          <LoaderCircle className="size-3.5 animate-spin" />
-                        ) : (
-                          <FileText className="size-3.5" />
-                        )}
-                        Choose PDF
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={uploadDisabled}
+                          className="inline-flex h-8 w-fit items-center gap-2 bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {isPreparing ? (
+                            <LoaderCircle className="size-3.5 animate-spin" />
+                          ) : (
+                            <FileText className="size-3.5" />
+                          )}
+                          Choose document
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowUrlImport(true)}
+                          disabled={uploadDisabled}
+                          className="inline-flex h-8 w-fit items-center gap-2 bg-foreground/[0.05] px-3 text-[12px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <Link2 className="size-3.5" />
+                          Import URL
+                        </button>
+                      </div>
                       {!uploadAllowed && !isAuthenticated ? (
                         <p className="text-[11px] leading-5 text-muted-foreground">
                           Guest upload already used.{" "}
@@ -762,7 +835,7 @@ export default function PdfChatShell() {
                         ? "Ask about the document…"
                         : document
                           ? "Wait until indexing finishes"
-                          : "Add a PDF to enable chat"
+                          : "Add a document to enable chat"
                     }
                     disabled={
                       !documentReady ||
@@ -777,7 +850,7 @@ export default function PdfChatShell() {
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={uploadDisabled}
-                      aria-label={document ? "Replace PDF" : "Upload PDF"}
+                      aria-label={document ? "Replace document" : "Upload document"}
                       className="flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {isPreparing ? (
@@ -828,6 +901,13 @@ export default function PdfChatShell() {
           onModeChange={setAuthMode}
           onClose={() => setShowAuthForm(false)}
           onAuthenticated={handleAuthenticated}
+        />
+      ) : null}
+
+      {showUrlImport ? (
+        <UrlImportDialog
+          onClose={() => setShowUrlImport(false)}
+          onImport={handleImportUrl}
         />
       ) : null}
     </main>
