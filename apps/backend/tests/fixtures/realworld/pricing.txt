@@ -1,0 +1,6 @@
+Helio Pricing
+Starter: 12 USD per month, includes 3 projects and 10 GB storage.
+Growth: 39 USD per month, includes unlimited projects and 100 GB storage.
+Enterprise: custom pricing with SSO and audit logs.
+Every plan starts with a 14-day free trial.
+Annual billing saves 20 percent.

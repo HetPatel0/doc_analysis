@@ -399,3 +399,168 @@ def test_semantic_chunking_indexes_with_metadata(monkeypatch, tmp_path):
     assert all(chunk.metadata["document_id"] == "doc10" for chunk in indexed)
     assert {chunk.metadata["page_number"] for chunk in indexed} == {1}
     assert "".join(chunk.page_content for chunk in indexed).count("Refund") == 3
+
+
+def test_watchdog_recovers_stalled_document(monkeypatch, tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "uploads_dir", tmp_path)
+    indexed_calls = []
+    monkeypatch.setattr(
+        documents,
+        "index_document",
+        lambda *args: indexed_calls.append(args),
+    )
+
+    doc_file = tmp_path / "stalled-doc.pdf"
+    doc_file.write_bytes(b"%PDF-1.4")
+
+    documents.write_document_status(
+        "stalled",
+        file_name="doc.pdf",
+        status="indexing",
+        index_attempts=0,
+    )
+    get_store().statuses["stalled"]["updated_at"] = datetime.now(UTC) - timedelta(
+        seconds=settings.index_stale_seconds + 30
+    )
+
+    recovered = documents.recover_stalled_documents()
+    assert recovered == ["stalled"]
+
+    st = status("stalled")
+    assert st["status"] == "queued"
+    assert st["index_attempts"] == 1
+
+
+def test_watchdog_skips_active_indexing(monkeypatch, tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "uploads_dir", tmp_path)
+    doc_file = tmp_path / "busy-doc.pdf"
+    doc_file.write_bytes(b"%PDF-1.4")
+
+    documents.write_document_status(
+        "busy",
+        file_name="doc.pdf",
+        status="indexing",
+        index_attempts=0,
+    )
+    get_store().statuses["busy"]["updated_at"] = datetime.now(UTC) - timedelta(
+        seconds=settings.index_stale_seconds + 30
+    )
+
+    with documents.track_indexing("busy"):
+        recovered = documents.recover_stalled_documents()
+        assert recovered == []
+
+    st = status("busy")
+    assert st["status"] == "indexing"
+    assert st["index_attempts"] == 0
+
+
+def test_watchdog_skips_deleted_tombstone(monkeypatch, tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "uploads_dir", tmp_path)
+    doc_file = tmp_path / "tomb-doc.pdf"
+    doc_file.write_bytes(b"%PDF-1.4")
+
+    documents.write_document_status(
+        "tomb",
+        file_name="doc.pdf",
+        status="indexing",
+        index_attempts=0,
+    )
+    get_store().statuses["tomb"]["updated_at"] = datetime.now(UTC) - timedelta(
+        seconds=settings.index_stale_seconds + 30
+    )
+    documents._remember_deleted("tomb")
+
+    recovered = documents.recover_stalled_documents()
+    assert recovered == []
+
+
+def test_watchdog_marks_failed_when_max_attempts_reached(monkeypatch, tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "uploads_dir", tmp_path)
+    doc_file = tmp_path / "exhausted-doc.pdf"
+    doc_file.write_bytes(b"%PDF-1.4")
+
+    documents.write_document_status(
+        "exhausted",
+        file_name="doc.pdf",
+        status="indexing",
+        index_attempts=settings.index_max_attempts,
+    )
+    get_store().statuses["exhausted"]["updated_at"] = datetime.now(UTC) - timedelta(
+        seconds=settings.index_stale_seconds + 30
+    )
+
+    recovered = documents.recover_stalled_documents()
+    assert recovered == []
+
+    st = status("exhausted")
+    assert st["status"] == "failed"
+    assert "exceeded maximum retry attempts" in st["error"]
+    assert st["index_attempts"] == settings.index_max_attempts
+
+
+def test_watchdog_marks_failed_when_upload_file_missing(monkeypatch, tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "uploads_dir", tmp_path)
+    documents.write_document_status(
+        "missing-file",
+        file_name="doc.pdf",
+        status="indexing",
+        index_attempts=0,
+    )
+    get_store().statuses["missing-file"]["updated_at"] = datetime.now(UTC) - timedelta(
+        seconds=settings.index_stale_seconds + 30
+    )
+
+    recovered = documents.recover_stalled_documents()
+    assert recovered == []
+
+    st = status("missing-file")
+    assert st["status"] == "failed"
+    assert "could not be found" in st["error"]
+
+
+def test_watchdog_respects_advisory_lock(monkeypatch):
+    from contextlib import contextmanager
+    from datetime import UTC, datetime, timedelta
+
+    from app.config import settings
+
+    documents.write_document_status(
+        "locked",
+        file_name="doc.pdf",
+        status="indexing",
+        index_attempts=0,
+    )
+    get_store().statuses["locked"]["updated_at"] = datetime.now(UTC) - timedelta(
+        seconds=settings.index_stale_seconds + 30
+    )
+
+    @contextmanager
+    def fake_advisory_lock(lock_id: int):
+        yield False
+
+    monkeypatch.setattr(get_store(), "advisory_lock", fake_advisory_lock)
+
+    recovered = documents.recover_stalled_documents()
+    assert recovered == []
+    assert status("locked")["status"] == "indexing"

@@ -7,15 +7,17 @@ Run with: uvicorn main:app (from apps/backend)
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from app import dependencies as deps
 from app.config import settings
 from app.observability import init_sentry
 from app.routers import chat, documents, health
 from app.services import chunking
+from app.services import documents as documents_service
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -48,7 +50,18 @@ async def lifespan(app: FastAPI):
             name="bookify-warmup",
             daemon=True,
         ).start()
-    yield
+
+    watchdog_task = None
+    if settings.index_auto_retry:
+        watchdog_task = asyncio.create_task(documents_service.watchdog_loop())
+
+    try:
+        yield
+    finally:
+        if watchdog_task:
+            watchdog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await watchdog_task
 
 
 app = FastAPI(title="Bookify API", version="0.1.0", lifespan=lifespan)

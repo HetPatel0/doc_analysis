@@ -1,0 +1,30 @@
+{
+  "name": "realworld",
+  "description": "Messy/real-world corpus: OCR scan, multi-column PDF, DOCX table, and URL text.",
+  "documents": [
+    {
+      "name": "scan-refunds",
+      "path": "scan-refunds.pdf",
+      "source_kind": "pdf",
+      "qa": "scan-refunds_qa.json"
+    },
+    {
+      "name": "messy-report",
+      "path": "messy-report.pdf",
+      "source_kind": "pdf",
+      "qa": "messy-report_qa.json"
+    },
+    {
+      "name": "policy-docx",
+      "path": "policy.docx",
+      "source_kind": "docx",
+      "qa": "policy_qa.json"
+    },
+    {
+      "name": "pricing-url",
+      "path": "pricing.txt",
+      "source_kind": "url",
+      "qa": "pricing_qa.json"
+    }
+  ]
+}

@@ -227,8 +227,13 @@ Backend (offline, no API key needed):
 cd apps/backend
 pip install -r requirements.txt -r requirements-dev.txt
 ruff check .
-pytest -q
+bash scripts/test.sh
 ```
+
+`scripts/test.sh` runs the same suite with a 2 GB memory cap, no swap, a hard
+2 minute timeout, and a bounded tiktoken warm-up. Prefer it over bare `pytest`
+on a desktop: a cold run otherwise downloads tiktoken's vocab with no request
+timeout, which can look like a hang.
 
 Frontend:
 

@@ -49,6 +49,7 @@ class DocumentStatusResponse(BaseModel):
     ocr_provider: str | None = None
     # pending -> insights are still being generated; ready/unavailable -> done.
     insights_status: str = "pending"
+    index_attempts: int = 0
     updated_at: datetime | None = None
     # True when queued/indexing has not moved for BOOKIFY_INDEX_STALE_SECONDS.
     stalled: bool = False

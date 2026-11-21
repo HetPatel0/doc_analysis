@@ -1,0 +1,51 @@
+{
+  "name": "scan-refunds",
+  "description": "Image-only support handbook: exercises the OCR fallback end to end.",
+  "document": "scan-refunds.pdf",
+  "questions": [
+    {
+      "id": "refund-window",
+      "question": "How many days do I have to request a refund?",
+      "expected_keywords": ["21 days"],
+      "expected_page": 1
+    },
+    {
+      "id": "refund-method",
+      "question": "How long does the refund take to reach the original payment method?",
+      "expected_keywords": ["5 business days"],
+      "expected_page": 1
+    },
+    {
+      "id": "support-hours",
+      "question": "When is support available?",
+      "expected_keywords": ["Monday through Saturday", "8 AM", "8 PM"],
+      "expected_page": 2
+    },
+    {
+      "id": "weekend-emergencies",
+      "question": "And on weekends?",
+      "history": [
+        { "role": "user", "content": "When is normal support available?" },
+        {
+          "role": "assistant",
+          "content": "Support is available Monday through Saturday from 8 AM to 8 PM Central European Time."
+        }
+      ],
+      "expected_keywords": ["24 hours", "7 days"],
+      "expected_page": 2
+    },
+    {
+      "id": "escalation",
+      "question": "When is a ticket escalated to the duty manager?",
+      "expected_keywords": ["48 hours"],
+      "expected_page": 3
+    },
+    {
+      "id": "unanswerable",
+      "question": "What is the annual salary of the chief executive officer?",
+      "expected_keywords": [],
+      "expected_page": null,
+      "expected_refusal": true
+    }
+  ]
+}

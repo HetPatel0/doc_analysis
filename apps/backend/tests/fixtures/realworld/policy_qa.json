@@ -1,0 +1,51 @@
+{
+  "name": "policy-docx",
+  "description": "DOCX policy with headings, paragraphs, and a table. Text formats cite chunks, not pages.",
+  "document": "policy.docx",
+  "questions": [
+    {
+      "id": "equipment-stipend",
+      "question": "How large is the equipment stipend?",
+      "expected_keywords": ["750 USD"],
+      "expected_chunk": 1
+    },
+    {
+      "id": "stipend-covers",
+      "question": "What does it cover?",
+      "history": [
+        { "role": "user", "content": "What is the equipment stipend?" },
+        {
+          "role": "assistant",
+          "content": "Each new remote employee receives a one-time equipment stipend of 750 USD."
+        }
+      ],
+      "expected_keywords": ["monitor", "chair", "desk"],
+      "expected_chunk": 1
+    },
+    {
+      "id": "core-hours",
+      "question": "What are the core collaboration hours?",
+      "expected_keywords": ["10:00", "15:00"],
+      "expected_chunk": 1
+    },
+    {
+      "id": "remote-security",
+      "question": "What security tools are remote employees required to use?",
+      "expected_keywords": ["VPN", "hardware security key"],
+      "expected_chunk": 1
+    },
+    {
+      "id": "internet-allowance",
+      "question": "How much is the monthly internet allowance?",
+      "expected_keywords": ["40 USD"],
+      "expected_chunk": 1
+    },
+    {
+      "id": "unanswerable",
+      "question": "What is the annual salary of the chief executive officer?",
+      "expected_keywords": [],
+      "expected_page": null,
+      "expected_refusal": true
+    }
+  ]
+}

@@ -94,3 +94,43 @@ def test_delete_removes_status_and_chunks():
 
     assert store.read_status("doc") is None
     assert store.count_chunks("doc") == 0
+
+
+def test_status_records_and_updates_index_attempts():
+    store = MemoryStore()
+    store.write_status("doc", file_name="a.pdf", status="queued", index_attempts=1)
+    assert store.read_status("doc")["index_attempts"] == 1
+
+    # write_status without index_attempts retains existing attempt count
+    store.write_status("doc", file_name="a.pdf", status="indexing")
+    assert store.read_status("doc")["index_attempts"] == 1
+
+    store.write_status("doc", file_name="a.pdf", status="queued", index_attempts=2)
+    assert store.read_status("doc")["index_attempts"] == 2
+
+
+def test_list_stalled_filters_by_status_and_time():
+    from datetime import UTC, datetime, timedelta
+
+    store = MemoryStore()
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(seconds=60)
+
+    store.write_status("old_indexing", file_name="a.pdf", status="indexing")
+    store.statuses["old_indexing"]["updated_at"] = now - timedelta(seconds=120)
+
+    store.write_status("old_queued", file_name="b.pdf", status="queued")
+    store.statuses["old_queued"]["updated_at"] = now - timedelta(seconds=90)
+
+    store.write_status("recent_indexing", file_name="c.pdf", status="indexing")
+    store.statuses["recent_indexing"]["updated_at"] = now - timedelta(seconds=10)
+
+    store.write_status("old_ready", file_name="d.pdf", status="ready")
+    store.statuses["old_ready"]["updated_at"] = now - timedelta(seconds=120)
+
+    store.write_status("old_failed", file_name="e.pdf", status="failed")
+    store.statuses["old_failed"]["updated_at"] = now - timedelta(seconds=120)
+
+    stalled = store.list_stalled(cutoff)
+    stalled_ids = {item["document_id"] for item in stalled}
+    assert stalled_ids == {"old_indexing", "old_queued"}

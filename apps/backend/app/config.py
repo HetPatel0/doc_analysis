@@ -93,6 +93,12 @@ class Settings:
     index_stale_seconds: int = int(
         os.getenv("BOOKIFY_INDEX_STALE_SECONDS", "900")
     )
+    # Self-healing indexing watchdog: automatically re-queues stalled documents.
+    index_auto_retry: bool = _flag("BOOKIFY_INDEX_AUTO_RETRY", "true")
+    index_max_attempts: int = int(os.getenv("BOOKIFY_INDEX_MAX_ATTEMPTS", "3"))
+    index_watchdog_interval_seconds: float = float(
+        os.getenv("BOOKIFY_INDEX_WATCHDOG_INTERVAL_SECONDS", "60")
+    )
 
     # URL import: a single page, no crawling. The fetch path validates DNS and
     # every redirect against the SSRF guard in ``services/url_import.py``.

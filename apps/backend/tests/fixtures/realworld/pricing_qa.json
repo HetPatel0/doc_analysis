@@ -1,0 +1,51 @@
+{
+  "name": "pricing-url",
+  "description": "Plain text extracted from an imported pricing page (source_kind=url).",
+  "document": "pricing.txt",
+  "questions": [
+    {
+      "id": "starter-price",
+      "question": "How much does the Starter plan cost?",
+      "expected_keywords": ["12 USD"],
+      "expected_chunk": 1
+    },
+    {
+      "id": "trial",
+      "question": "How long is the free trial?",
+      "expected_keywords": ["14-day"],
+      "expected_chunk": 1
+    },
+    {
+      "id": "annual-discount",
+      "question": "How much does annual billing save?",
+      "expected_keywords": ["20 percent"],
+      "expected_chunk": 1
+    },
+    {
+      "id": "growth-storage",
+      "question": "How much storage does the Growth plan include?",
+      "expected_keywords": ["100 GB"],
+      "expected_chunk": 1
+    },
+    {
+      "id": "growth-price",
+      "question": "And how much is the Growth plan?",
+      "history": [
+        { "role": "user", "content": "What does the Starter plan include?" },
+        {
+          "role": "assistant",
+          "content": "The Starter plan costs 12 USD per month and includes 3 projects and 10 GB of storage."
+        }
+      ],
+      "expected_keywords": ["39 USD"],
+      "expected_chunk": 1
+    },
+    {
+      "id": "unanswerable",
+      "question": "What is the annual salary of the chief executive officer?",
+      "expected_keywords": [],
+      "expected_page": null,
+      "expected_refusal": true
+    }
+  ]
+}

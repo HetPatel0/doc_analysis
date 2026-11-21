@@ -1,0 +1,57 @@
+{
+  "name": "messy-report",
+  "description": "Multi-column quarterly report with tables, footnotes, and repeated headers.",
+  "document": "messy-report.pdf",
+  "questions": [
+    {
+      "id": "q3-revenue",
+      "question": "What was Q3 revenue and how much did it grow?",
+      "expected_keywords": ["4.8 million", "12 percent"],
+      "expected_page": 1
+    },
+    {
+      "id": "emea-revenue",
+      "question": "How much revenue did EMEA contribute?",
+      "expected_keywords": ["2.1", "EMEA"],
+      "expected_page": 1
+    },
+    {
+      "id": "apac-growth",
+      "question": "And how fast did APAC grow?",
+      "history": [
+        { "role": "user", "content": "How did EMEA perform?" },
+        {
+          "role": "assistant",
+          "content": "EMEA contributed 2.1 million EUR and grew 9 percent."
+        }
+      ],
+      "expected_keywords": ["18 percent", "APAC"],
+      "expected_page": 1
+    },
+    {
+      "id": "churn",
+      "question": "What was customer churn in Q3?",
+      "expected_keywords": ["3.4 percent"],
+      "expected_page": 2
+    },
+    {
+      "id": "net-retention",
+      "question": "What was net revenue retention?",
+      "expected_keywords": ["108 percent"],
+      "expected_page": 2
+    },
+    {
+      "id": "headcount",
+      "question": "How many employees does the company have, and how many work in engineering?",
+      "expected_keywords": ["84", "31"],
+      "expected_page": 3
+    },
+    {
+      "id": "unanswerable",
+      "question": "What is the annual salary of the chief executive officer?",
+      "expected_keywords": [],
+      "expected_page": null,
+      "expected_refusal": true
+    }
+  ]
+}

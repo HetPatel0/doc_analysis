@@ -48,6 +48,9 @@ back to `python3` (containers, Railway). It binds `0.0.0.0:$PORT` and honours
 | `BOOKIFY_URL_IMPORT_MAX_MB` | no | Downloaded page size cap; default 5 |
 | `BOOKIFY_WARM_ON_STARTUP` | no | Warms imports + tiktoken in a background thread; safe to leave enabled because it no longer blocks the health check |
 | `BOOKIFY_INDEX_STALE_SECONDS` | no | Documents stuck in `queued`/`indexing` longer than this are `stalled` and retryable; default 900 |
+| `BOOKIFY_INDEX_AUTO_RETRY` | no | Automatically re-queue stalled documents via background watchdog; default `true` |
+| `BOOKIFY_INDEX_MAX_ATTEMPTS` | no | Max retry attempts before marking a stalled document failed; default 3 |
+| `BOOKIFY_INDEX_WATCHDOG_INTERVAL_SECONDS` | no | Watchdog sweep interval in seconds; default 60 |
 | `SENTRY_DSN` | no | Blank disables error reporting |
 
 ### State: Neon for vectors, volume for uploads
@@ -175,7 +178,7 @@ index on first connection. The database user must be allowed to
   `MISTRAL_API_KEY` repository secret. See `apps/backend/RAG.md` for the golden
   set, thresholds, and the current known failure.
 
-## Known deploy gaps (after Phase 3.1)
+## Known deploy gaps (after Phase 3.7)
 
 - Uploaded files still live on the volume; there is no object storage or
   signed-URL access. This is the remaining reason for a single replica.
@@ -183,6 +186,6 @@ index on first connection. The database user must be allowed to
   authenticated-page support.
 - The embedding dimension is fixed at `RAG_EMBEDDING_DIM` (1024). Switching
   embedding models with a different size needs a schema change plus a reindex.
-- Background indexing runs in-process (FastAPI `BackgroundTasks`), so a restart
-  mid-index leaves a document stuck in `indexing`. Status polling surfaces this,
-  but there is no automatic retry yet.
+- Background indexing runs in-process; an automatic watchdog now sweeps stalled
+  `queued`/`indexing` documents with advisory-locked single-worker execution
+  and retries up to `BOOKIFY_INDEX_MAX_ATTEMPTS`.

@@ -45,6 +45,7 @@ STATUS_FIELDS = (
     "ocr_used",
     "ocr_provider",
     "insights_status",
+    "index_attempts",
     "updated_at",
 )
 
@@ -69,9 +70,14 @@ class Store(Protocol):
         ocr_used: bool = False,
         ocr_provider: str | None = None,
         insights_status: str = "pending",
+        index_attempts: int | None = None,
     ) -> None: ...
 
     def read_status(self, document_id: str) -> dict[str, Any] | None: ...
+
+    def list_stalled(self, stale_before: datetime) -> list[dict[str, Any]]: ...
+
+    def advisory_lock(self, lock_id: int): ...
 
     def ping(self) -> None: ...
 
@@ -109,6 +115,7 @@ def _status_row(
     ocr_used: bool = False,
     ocr_provider: str | None = None,
     insights_status: str = "pending",
+    index_attempts: int | None = None,
 ) -> dict[str, Any]:
     return {
         "document_id": document_id,
@@ -125,6 +132,7 @@ def _status_row(
         "ocr_used": ocr_used,
         "ocr_provider": ocr_provider,
         "insights_status": insights_status,
+        "index_attempts": index_attempts if index_attempts is not None else 0,
         "updated_at": datetime.now(UTC),
     }
 
@@ -269,6 +277,13 @@ class PostgresStore:
                     """
                 )
                 cur.execute(
+                    """
+                    alter table document_index
+                        add column if not exists index_attempts
+                        integer not null default 0
+                    """
+                )
+                cur.execute(
                     f"""
                     create table if not exists document_chunk (
                         id bigserial primary key,
@@ -322,6 +337,7 @@ class PostgresStore:
         ocr_used: bool = False,
         ocr_provider: str | None = None,
         insights_status: str = "pending",
+        index_attempts: int | None = None,
     ) -> None:
         self.ensure_schema()
         row = _status_row(
@@ -339,6 +355,7 @@ class PostgresStore:
             ocr_used=ocr_used,
             ocr_provider=ocr_provider,
             insights_status=insights_status,
+            index_attempts=index_attempts,
         )
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -346,10 +363,10 @@ class PostgresStore:
                 insert into document_index (
                     document_id, file_name, source_kind, mime_type, status,
                     chunks_indexed, error, summary, key_points, action_items, quiz,
-                    ocr_used, ocr_provider, insights_status, updated_at
+                    ocr_used, ocr_provider, insights_status, index_attempts, updated_at
                 ) values (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
-                    %s, %s, %s, now()
+                    %s, %s, %s, coalesce(%s, 0), now()
                 )
                 on conflict (document_id) do update set
                     file_name = excluded.file_name,
@@ -365,6 +382,7 @@ class PostgresStore:
                     ocr_used = excluded.ocr_used,
                     ocr_provider = excluded.ocr_provider,
                     insights_status = excluded.insights_status,
+                    index_attempts = coalesce(excluded.index_attempts, document_index.index_attempts),
                     updated_at = now()
                 """,
                 (
@@ -382,6 +400,7 @@ class PostgresStore:
                     row["ocr_used"],
                     row["ocr_provider"],
                     row["insights_status"],
+                    index_attempts,
                 ),
             )
 
@@ -394,13 +413,52 @@ class PostgresStore:
                 """
                 select document_id, file_name, source_kind, mime_type, status,
                        chunks_indexed, error, summary, key_points, action_items,
-                       quiz, ocr_used, ocr_provider, insights_status, updated_at
+                       quiz, ocr_used, ocr_provider, insights_status, index_attempts, updated_at
                 from document_index where document_id = %s
                 """,
                 (document_id,),
             )
             row = cur.fetchone()
         return dict(row) if row else None
+
+    def list_stalled(self, stale_before: datetime) -> list[dict[str, Any]]:
+        self.ensure_schema()
+        from psycopg.rows import dict_row
+
+        with self._connect() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                select document_id, file_name, source_kind, mime_type, status,
+                       chunks_indexed, error, summary, key_points, action_items,
+                       quiz, ocr_used, ocr_provider, insights_status, index_attempts, updated_at
+                from document_index
+                where status in ('queued', 'indexing') and updated_at < %s
+                order by updated_at asc
+                """,
+                (stale_before,),
+            )
+            rows = cur.fetchall()
+            return [dict(row) for row in rows]
+
+    @contextmanager
+    def advisory_lock(self, lock_id: int):
+        acquired = False
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("select pg_try_advisory_lock(%s)", (lock_id,))
+                row = cur.fetchone()
+                acquired = bool(row and row[0])
+            if not acquired:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("select pg_advisory_unlock(%s)", (lock_id,))
+                except Exception:
+                    pass
 
     def ping(self) -> None:
         """Readiness probe: fail unless the database answers a trivial query."""
@@ -537,11 +595,30 @@ class MemoryStore:
         self.chunks: dict[str, list[tuple[Document, list[float]]]] = defaultdict(list)
 
     def write_status(self, document_id: str, **kwargs: Any) -> None:
+        existing = self.statuses.get(document_id, {})
+        if kwargs.get("index_attempts") is None and "index_attempts" in existing:
+            kwargs["index_attempts"] = existing["index_attempts"]
         self.statuses[document_id] = _status_row(document_id, **kwargs)
 
     def read_status(self, document_id: str) -> dict[str, Any] | None:
         status = self.statuses.get(document_id)
         return dict(status) if status else None
+
+    def list_stalled(self, stale_before: datetime) -> list[dict[str, Any]]:
+        results = []
+        for s in self.statuses.values():
+            if s.get("status") in {"queued", "indexing"}:
+                updated_at = s.get("updated_at")
+                if updated_at:
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.replace(tzinfo=UTC)
+                    if updated_at < stale_before:
+                        results.append(dict(s))
+        return results
+
+    @contextmanager
+    def advisory_lock(self, lock_id: int):
+        yield True
 
     def replace_chunks(
         self,
